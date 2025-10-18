@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+scripts/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+.npmrc
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+test-results/
+
+# Editor & IDE
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*~
+
+# OS Files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Temp files
+.cache/
+.temp/
+.tmp/
+*.tmp
+.cursor/
+
+# Documentation build
+docs/api/
+.docusaurus/

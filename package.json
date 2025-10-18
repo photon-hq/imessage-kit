@@ -1,0 +1,54 @@
+{
+    "name": "@sg-hq/imessage-kit",
+    "version": "1.0.0",
+    "description": "A type-safe, elegant iMessage SDK for macOS with zero dependencies",
+    "author": "GreatSomething",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Something-Great-AI/imessage-kit.git"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com/"
+    },
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "files": ["dist", "README.md"],
+    "keywords": ["imessage", "sms", "rcs", "macos", "typescript", "sdk"],
+    "scripts": {
+        "dev": "tsup --watch",
+        "build": "tsup",
+        "type-check": "tsc --noEmit",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format": "biome format --write .",
+        "test": "bun test",
+        "test:watch": "bun test --watch",
+        "test:coverage": "bun test --coverage",
+        "prepublishOnly": "npm run lint && npm run type-check && npm run test && npm run build",
+        "prepack": "npm run build",
+        "check:package": "bash scripts/check-package.sh",
+        "check:publish": "bash scripts/publish-check.sh"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^1.9.4",
+        "@types/bun": "^1.0.0",
+        "@types/node": "^20.0.0",
+        "tsup": "^8.0.0",
+        "typescript": "^5.3.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "os": ["darwin"],
+    "sideEffects": false
+}
