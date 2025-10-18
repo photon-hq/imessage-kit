@@ -99,7 +99,6 @@ export class MessageChain {
         return this.when((m) => m.isGroupChat)
     }
 
-
     /**
      * Reply with text
      */
