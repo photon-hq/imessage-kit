@@ -1,0 +1,3 @@
+# Lock files - merge strategy
+package-lock.json merge=union
+bun.lock merge=union

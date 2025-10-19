@@ -4,9 +4,9 @@
  * - Query message history (with multiple filter options)
  * - Read message attachment information
  * - Support all message types (iMessage, SMS, RCS)
+ * - Support both Bun and Node.js runtimes
  */
 
-import { Database } from 'bun:sqlite'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Attachment, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
@@ -18,13 +18,45 @@ const num = (v: unknown, fallback = 0): number => (typeof v === 'number' ? v : f
 const bool = (v: unknown): boolean => Boolean(v)
 
 /**
+ * Runtime detection and database adapter
+ * Automatically uses bun:sqlite for Bun runtime, better-sqlite3 for Node.js
+ */
+type DatabaseAdapter = any
+
+let Database: new (path: string, options?: { readonly?: boolean }) => DatabaseAdapter
+
+async function initDatabase() {
+    if (Database) return
+
+    // Detect runtime
+    if (typeof Bun !== 'undefined') {
+        // Bun runtime
+        const bunSqlite = await import('bun:sqlite')
+        Database = bunSqlite.Database
+    } else {
+        // Node.js runtime
+        try {
+            const BetterSqlite3 = await import('better-sqlite3')
+            // better-sqlite3 uses default export
+            Database = BetterSqlite3.default || BetterSqlite3
+        } catch (error) {
+            throw DatabaseError(
+                'better-sqlite3 is required for Node.js runtime. Install it with: npm install better-sqlite3'
+            )
+        }
+    }
+}
+
+/**
  * Read-only access to macOS Messages app SQLite database
  */
 export class IMessageDatabase {
     /** SQLite database instance */
-    private db: Database
+    private db: DatabaseAdapter
     /** macOS epoch time (timestamp of 2001-01-01) */
     private readonly MAC_EPOCH = new Date('2001-01-01T00:00:00Z').getTime()
+    /** Initialization promise */
+    private initPromise: Promise<void>
 
     /**
      * Open iMessage database
@@ -32,13 +64,28 @@ export class IMessageDatabase {
      * @throws DatabaseError When database fails to open
      */
     constructor(path: string) {
+        this.initPromise = this.init(path)
+    }
+
+    /**
+     * Initialize database (async)
+     */
+    private async init(path: string): Promise<void> {
         try {
+            await initDatabase()
             this.db = new Database(path, { readonly: true })
         } catch (error) {
             throw DatabaseError(
                 `Failed to open database at ${path}: ${error instanceof Error ? error.message : String(error)}`
             )
         }
+    }
+
+    /**
+     * Ensure database is initialized before any operation
+     */
+    private async ensureInit(): Promise<void> {
+        await this.initPromise
     }
 
     /**
@@ -71,6 +118,7 @@ export class IMessageDatabase {
      * ```
      */
     async getMessages(filter: MessageFilter = {}): Promise<MessageQueryResult> {
+        await this.ensureInit()
         const { unreadOnly, sender, chatId, service, hasAttachments, since, limit } = filter
 
         let query = `
@@ -188,6 +236,7 @@ export class IMessageDatabase {
      * @returns Array of attachments, returns empty array if no attachments
      */
     private async getAttachments(messageId: string): Promise<Attachment[]> {
+        await this.ensureInit()
         const query = `
         SELECT 
             attachment.ROWID as id,
@@ -282,7 +331,8 @@ export class IMessageDatabase {
     /**
      * Close database connection
      */
-    close() {
+    async close() {
+        await this.ensureInit()
         this.db.close()
     }
 }

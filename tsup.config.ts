@@ -13,5 +13,9 @@ export default defineConfig({
     platform: 'node',
     splitting: false,
     bundle: true,
-    external: ['bun:sqlite'],
+    // External dependencies - will be resolved at runtime
+    external: [
+        'bun:sqlite', // Bun runtime
+        'better-sqlite3', // Node.js runtime
+    ],
 })

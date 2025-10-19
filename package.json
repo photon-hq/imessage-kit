@@ -32,6 +32,7 @@
         "lint:fix": "biome check --write .",
         "format": "biome format --write .",
         "test": "bun test",
+        "test:node": "node --test",
         "test:watch": "bun test --watch",
         "test:coverage": "bun test --coverage",
         "prepublishOnly": "npm run lint && npm run type-check && npm run test && npm run build",
@@ -41,10 +42,14 @@
     },
     "devDependencies": {
         "@biomejs/biome": "^1.9.4",
+        "@types/better-sqlite3": "^7.6.0",
         "@types/bun": "^1.0.0",
         "@types/node": "^20.0.0",
         "tsup": "^8.0.0",
         "typescript": "^5.3.0"
+    },
+    "optionalDependencies": {
+        "better-sqlite3": "^11.0.0"
     },
     "engines": {
         "node": ">=18.0.0"

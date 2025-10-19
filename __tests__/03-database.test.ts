@@ -29,10 +29,9 @@ describe('IMessageDatabase', () => {
             expect(database).toBeInstanceOf(IMessageDatabase)
         })
 
-        it('should throw DatabaseError for invalid path', () => {
-            expect(() => {
-                new IMessageDatabase('/non/existent/path.db')
-            }).toThrow()
+        it('should throw DatabaseError for invalid path', async () => {
+            const invalidDb = new IMessageDatabase('/non/existent/path.db')
+            await expect(invalidDb.getMessages()).rejects.toThrow()
         })
     })
 

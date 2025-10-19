@@ -1,59 +1,32 @@
-# Source files (only dist/ is needed)
+# Source files (only ship dist/)
 src/
 __tests__/
-test/
-*.test.ts
-*.spec.ts
-
-# Examples
 examples/
+scripts/
 
 # Config files
 tsconfig.json
 tsup.config.ts
 biome.json
-bunfig.toml
-vitest.config.ts
 
-# Development tools
-.vscode/
-.idea/
-.cursor/
-.editorconfig
-
-# Git files
-.git/
-.gitignore
-.gitattributes
-.github/
-
-# CI/CD
-.travis.yml
-.gitlab-ci.yml
-.circleci/
-
-# Documentation (keep README.md)
-docs/
-*.md
-!README.md
-
-# Scripts
-scripts/
-
-# Temp & Logs
-*.log
-*.tmp
-.DS_Store
-.env*
-.npmrc
-
-# Lock files
+# Lock files (let users manage their own)
+bun.lock
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
-bun.lockb
 
-# Misc
-PUBLISH.md
-CHANGELOG.md
+# Development files
+.vscode/
+.idea/
+.cursor/
+*.log
+.DS_Store
+
+# Testing
 coverage/
+.nyc_output/
+test-results/
+
+# Build artifacts
+*.tsbuildinfo
+.cache/

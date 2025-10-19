@@ -2,12 +2,37 @@
  * Test Setup and Utilities
  *
  * Provides mock implementations and test utilities for SDK testing
+ * Supports both Bun and Node.js runtimes
  */
 
-import { Database } from 'bun:sqlite'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+/**
+ * Runtime detection for test database
+ */
+type DatabaseAdapter = any
+type DatabaseConstructor = new (path: string, options?: any) => DatabaseAdapter
+
+let Database: DatabaseConstructor
+
+async function initTestDatabase() {
+    if (Database) return
+
+    if (typeof Bun !== 'undefined') {
+        // Bun runtime
+        const bunSqlite = await import('bun:sqlite')
+        Database = bunSqlite.Database
+    } else {
+        // Node.js runtime
+        const BetterSqlite3 = await import('better-sqlite3')
+        Database = BetterSqlite3.default || BetterSqlite3
+    }
+}
+
+// Initialize on module load
+await initTestDatabase()
 
 /**
  * Create a temporary directory for tests
@@ -32,7 +57,7 @@ export function cleanupTempDir(path: string) {
 /**
  * Create a mock iMessage database with test data
  */
-export function createMockDatabase(): { db: Database; path: string; cleanup: () => void } {
+export function createMockDatabase(): { db: DatabaseAdapter; path: string; cleanup: () => void } {
     const tempPath = join(tmpdir(), `test-imessage-${Date.now()}.db`)
     const db = new Database(tempPath)
 
@@ -101,7 +126,7 @@ export function createMockDatabase(): { db: Database; path: string; cleanup: () 
  * Insert test message into mock database
  */
 export function insertTestMessage(
-    db: Database,
+    db: DatabaseAdapter,
     options: {
         text: string
         sender: string
