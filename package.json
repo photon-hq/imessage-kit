@@ -22,18 +22,8 @@
             "require": "./dist/index.cjs"
         }
     },
-    "files": [
-        "dist",
-        "README.md"
-    ],
-    "keywords": [
-        "imessage",
-        "sms",
-        "rcs",
-        "macos",
-        "typescript",
-        "sdk"
-    ],
+    "files": ["dist", "README.md"],
+    "keywords": ["imessage", "sms", "rcs", "macos", "typescript", "sdk"],
     "scripts": {
         "dev": "tsup --watch",
         "build": "tsup",
@@ -64,8 +54,6 @@
     "engines": {
         "node": ">=18.0.0"
     },
-    "os": [
-        "darwin"
-    ],
+    "os": ["darwin"],
     "sideEffects": false
 }
