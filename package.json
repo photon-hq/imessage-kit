@@ -1,6 +1,6 @@
 {
     "name": "@sg-hq/imessage-kit",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "A type-safe, elegant iMessage SDK for macOS with zero dependencies",
     "author": "GreatSomething",
     "license": "MIT",
@@ -22,8 +22,18 @@
             "require": "./dist/index.cjs"
         }
     },
-    "files": ["dist", "README.md"],
-    "keywords": ["imessage", "sms", "rcs", "macos", "typescript", "sdk"],
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "keywords": [
+        "imessage",
+        "sms",
+        "rcs",
+        "macos",
+        "typescript",
+        "sdk"
+    ],
     "scripts": {
         "dev": "tsup --watch",
         "build": "tsup",
@@ -54,6 +64,8 @@
     "engines": {
         "node": ">=18.0.0"
     },
-    "os": ["darwin"],
+    "os": [
+        "darwin"
+    ],
     "sideEffects": false
 }
