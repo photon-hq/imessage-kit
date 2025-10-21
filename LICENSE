@@ -1,0 +1,120 @@
+Server Side Public License (SSPL)
+Version 1, October 16, 2018
+
+Copyright © 2025 GreatSomething
+
+ADDITIONAL TERMS FOR THIS SOFTWARE:
+
+This software is licensed under the Server Side Public License v1 (SSPL) with
+the following additional restrictions:
+
+1. PROHIBITION ON COMPETITIVE USE
+
+   You may NOT use this software or any modified version of it to develop,
+   distribute, or operate a competing product or service. A "competing product
+   or service" means any software, service, or product that:
+   
+   a) Provides similar iMessage, SMS, or RCS messaging functionality
+   b) Offers an SDK, API, or library for accessing Apple Messages on macOS
+   c) Competes with the primary purpose and functionality of this software
+   d) Is offered as a commercial product or service in the same market
+
+2. PERMITTED USES
+
+   You MAY use this software for:
+   
+   a) Internal business operations and automation
+   b) Personal projects and non-commercial applications
+   c) Educational and research purposes
+   d) Integration into your own products where messaging is not the core feature
+
+3. ENFORCEMENT
+
+   Violation of these additional restrictions will result in immediate
+   termination of your license to use this software.
+
+---
+
+Full SSPL License Terms:
+
+Everyone is permitted to copy and distribute verbatim copies of this license
+document, but changing it is not allowed.
+
+TERMS AND CONDITIONS
+
+0. Definitions.
+
+"This License" refers to Server Side Public License.
+
+"Copyright" also means copyright-like laws that apply to other kinds of works,
+such as semiconductor masks.
+
+"The Program" refers to any copyrightable work licensed under this License.
+Each licensee is addressed as "you". "Licensees" and "recipients" may be
+individuals or organizations.
+
+To "modify" a work means to copy from or adapt all or part of the work in a
+fashion requiring copyright permission, other than the making of an exact copy.
+The resulting work is called a "modified version" of the earlier work or a work
+"based on" the earlier work.
+
+A "covered work" means either the unmodified Program or a work based on the
+Program.
+
+To "propagate" a work means to do anything with it that, without permission,
+would make you directly or secondarily liable for infringement under applicable
+copyright law, except executing it on a computer or modifying a private copy.
+Propagation includes copying, distribution (with or without modification),
+making available to the public, and in some countries other activities as well.
+
+To "convey" a work means any kind of propagation that enables other parties to
+make or receive copies. Mere interaction with a user through a computer network,
+with no transfer of a copy, is not conveying.
+
+13. Offering the Program as a Service.
+
+If you make the functionality of the Program or a modified version available to
+third parties as a service, you must make the Service Source Code available via
+network download to everyone at no charge, under the terms of this License.
+Making the functionality of the Program or modified version available to third
+parties as a service includes, without limitation, enabling third parties to
+interact with the functionality of the Program or modified version remotely
+through a computer network, offering a service the value of which entirely or
+primarily derives from the value of the Program or modified version, or offering
+a service that accomplishes for users the primary purpose of the Program or
+modified version.
+
+"Service Source Code" means the Corresponding Source for the Program or the
+modified version, and the Corresponding Source for all programs that you use to
+make the Program or modified version available as a service, including, without
+limitation, management software, user interfaces, application program interfaces,
+automation software, monitoring software, backup software, storage software and
+hosting software, all such that a user could run an instance of the service
+using the Service Source Code you make available.
+
+15. Disclaimer of Warranty.
+
+THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY APPLICABLE LAW.
+EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR OTHER
+PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
+EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE ENTIRE RISK AS TO THE
+QUALITY AND PERFORMANCE OF THE PROGRAM IS WITH YOU. SHOULD THE PROGRAM PROVE
+DEFECTIVE, YOU ASSUME THE COST OF ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
+
+16. Limitation of Liability.
+
+IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING WILL ANY
+COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS THE PROGRAM AS
+PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL,
+INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO USE
+THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF DATA OR DATA BEING RENDERED
+INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD PARTIES OR A FAILURE OF THE
+PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS), EVEN IF SUCH HOLDER OR OTHER PARTY
+HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+END OF TERMS AND CONDITIONS
+
+For the complete SSPL license text, visit:
+https://www.mongodb.com/legal/licensing/server-side-public-license
+

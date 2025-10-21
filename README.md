@@ -1,15 +1,16 @@
-# @sg-hq/imessage-kit
+# @photon-ai/imessage-kit
 
-> A type-safe, elegant iMessage SDK for macOS with zero dependencies
+> A type-safe, elegant iMessage SDK for macOS with cross-runtime support
 
-[![npm version](https://img.shields.io/npm/v/@sg-hq/imessage-kit.svg)](https://www.npmjs.com/package/@sg-hq/imessage-kit)
+[![npm version](https://img.shields.io/npm/v/@photon-ai/imessage-kit.svg)](https://www.npmjs.com/package/@photon-ai/imessage-kit)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
 
 ## Features
 
 - **100% Type-safe** - Full TypeScript support with perfect type inference
-- **Zero Dependencies** - Pure TypeScript implementation (only `bun:sqlite` for database)
+- **Cross-Runtime** - Supports both Node.js and Bun with automatic runtime detection
+- **Smart Database** - Uses native `bun:sqlite` for Bun, `better-sqlite3` for Node.js
 - **Read Messages** - Query iMessage, SMS, and RCS messages with powerful filters
 - **Send Messages** - Send text and images (local files or network URLs)
 - **Fluent API** - Elegant message chain processing
@@ -21,17 +22,21 @@
 ## Installation
 
 ```bash
-bun add @sg-hq/imessage-kit
+# For Bun (zero dependencies)
+bun add @photon-ai/imessage-kit
+
+# For Node.js (requires better-sqlite3)
+npm install @photon-ai/imessage-kit better-sqlite3
 # or
-npm install @sg-hq/imessage-kit
+yarn add @photon-ai/imessage-kit better-sqlite3
 ```
 
 ## Quick Start
 
 ```typescript
-import { IMessageSDK, type IMessage } from '@sg-hq/imessage-kit'
+import { IMessageSDK, type IMessage } from '@photon-ai/imessage-kit'
 
-// Initialize SDK
+// Initialize SDK (works in both Node.js and Bun)
 const sdk = new IMessageSDK({
     debug: true,
     maxConcurrent: 5
@@ -39,7 +44,7 @@ const sdk = new IMessageSDK({
 
 // Get unread messages
 const unreadMessages = await sdk.getUnreadMessages()
-for (const [sender, messages] of unreadMessages) {
+for (const { sender, messages } of unreadMessages) {
     console.log(`${sender}: ${messages.length} unread messages`)
 }
 
@@ -67,18 +72,14 @@ const filtered = await sdk.getMessages({
     unreadOnly: true,
     service: 'iMessage',
     limit: 20,
-    since: new Date('2024-01-01')
+    since: new Date('2025-10-20')
 })
 
 // Get unread messages grouped by sender
 const unread = await sdk.getUnreadMessages()
-for (const [sender, messages] of unread) {
+for (const { sender, messages } of unread) {
     console.log(`${sender}: ${messages.length} unread`)
 }
-
-// Get unread count
-const count = await sdk.getUnreadCount()
-console.log(`Total unread: ${count}`)
 ```
 
 ### Sending Messages
@@ -147,6 +148,14 @@ await sdk.message(msg)
 ### Real-time Message Watching
 
 ```typescript
+// Initialize SDK with custom watcher config
+const sdk = new IMessageSDK({
+    watcher: {
+        pollInterval: 3000,  // Check every 3 seconds (default: 2000ms)
+        unreadOnly: true      // Only watch for unread messages (default: true)
+    }
+})
+
 // Start watching for new messages
 await sdk.startWatching({
     // Callback for new messages
@@ -163,36 +172,25 @@ await sdk.startWatching({
     // Error handler
     onError: (error) => {
         console.error('Watcher error:', error)
-    },
-    
-    // Polling interval (default: 2000ms)
-    interval: 3000
+    }
 })
 
-// Check watcher status
-const status = sdk.getWatcherStatus()
-console.log('Watching:', status.isWatching)
-
-// Stop watching
+// Stop watching when done
 sdk.stopWatching()
 ```
 
 ### Webhook Integration
 
 ```typescript
-// Start watching with webhook
-await sdk.startWatching({
+const sdk = new IMessageSDK({
     webhook: {
         url: 'https://your-server.com/webhook',
-        secret: 'your-secret-key',
-        headers: {
-            'X-Custom-Header': 'value'
-        }
-    },
-    onNewMessage: async (msg) => {
-        console.log('New message:', msg.text)
+        headers: { 'Authorization': 'Bearer token' }
     }
 })
+
+await sdk.startWatching()
+// Webhook receives: { event, message, timestamp }
 ```
 
 ## Plugin System
@@ -200,7 +198,7 @@ await sdk.startWatching({
 Extend SDK functionality with plugins:
 
 ```typescript
-import { loggerPlugin } from '@sg-hq/imessage-kit'
+import { loggerPlugin } from '@photon-ai/imessage-kit'
 
 // Use built-in logger plugin
 sdk.use(loggerPlugin({
@@ -231,56 +229,30 @@ sdk.use(customPlugin)
 
 ## Advanced Usage
 
-### Type-safe Configuration
+### Configuration Options
 
 ```typescript
-import { type IMessage } from '@sg-hq/imessage-kit'
-
-// Use type namespace (Elysia-style)
-const config: IMessage.Config = {
-    debug: true,
-    maxConcurrent: 10,
-    scriptTimeout: 30000,
-    databasePath: '/path/to/chat.db',
-    plugins: [loggerPlugin()]
-}
-
-const sdk = new IMessageSDK(config)
+const sdk = new IMessageSDK({
+    debug: true,                     // Enable debug logging
+    maxConcurrent: 10,               // Max concurrent sends
+    scriptTimeout: 30000,            // AppleScript timeout (ms)
+    databasePath: '/custom/path',    // Custom database path
+    plugins: [loggerPlugin()]        // Plugins
+})
 ```
 
 ### Error Handling
 
 ```typescript
-import { 
-    IMessageError,
-    PlatformError, 
-    DatabaseError, 
-    SendError 
-} from '@sg-hq/imessage-kit'
+import { SendError, DatabaseError } from '@photon-ai/imessage-kit'
 
 try {
     await sdk.send('+1234567890', 'Hello')
 } catch (error) {
     if (error instanceof SendError) {
-        console.error('Failed to send:', error.message)
-    } else if (error instanceof DatabaseError) {
-        console.error('Database error:', error.message)
-    } else if (IMessageError.is(error)) {
-        console.error(`Error [${error.code}]:`, error.message)
+        console.error('Send failed:', error.message)
     }
 }
-```
-
-### Message Filters
-
-```typescript
-const result = await sdk.getMessages({
-    sender: '+1234567890',          // Filter by sender
-    service: 'iMessage',             // 'iMessage' | 'SMS' | 'RCS'
-    unreadOnly: true,                // Only unread messages
-    limit: 50,                       // Limit results
-    since: new Date('2024-01-01')   // Messages after date
-})
 ```
 
 ## Examples
@@ -296,29 +268,44 @@ Check the `examples/` directory for complete examples:
 
 ```bash
 # Install dependencies
+npm install
+# or
 bun install
 
 # Run tests
+npm test        # runs bun test
+# or
 bun test
 
 # Run tests with coverage
 bun test --coverage
 
 # Build
+npm run build
+# or
 bun run build
 
 # Lint
+npm run lint
+# or
 bun run lint
 
 # Type check
+npm run type-check
+# or
 bun run type-check
 ```
 
 ## Requirements
 
 - **OS**: macOS only (accesses iMessage database)
-- **Runtime**: Node.js >= 18.0.0 or Bun
+- **Runtime**: Node.js >= 18.0.0 or Bun >= 1.0.0
+- **Database Driver**: 
+  - **Bun**: Uses built-in `bun:sqlite` (no extra dependencies)
+  - **Node.js**: Requires `better-sqlite3` (install separately)
 - **Permissions**: Read access to `~/Library/Messages/chat.db`
+
+> **Note**: The SDK automatically detects your runtime and uses the appropriate database driver.
 
 ## Security Notes
 
@@ -329,44 +316,40 @@ bun run type-check
 
 ## API Reference
 
-### IMessageSDK
+### Main Methods
 
-#### Methods
+- `getMessages(filter?)` - Query messages with optional filters
+- `getUnreadMessages()` - Get unread messages grouped by sender
+- `send(to, content)` - Send text and/or images
+- `sendBatch(messages)` - Send multiple messages concurrently
+- `message(msg)` - Create message processing chain
+- `startWatching(events?)` - Start monitoring new messages
+- `stopWatching()` - Stop monitoring
+- `use(plugin)` - Register plugin
+- `close()` - Close SDK and release resources
 
-- `getMessages(filter?: MessageFilter): Promise<MessageQueryResult>`
-- `getUnreadMessages(): Promise<Map<string, Message[]>>`
-- `getUnreadCount(): Promise<number>`
-- `send(to: string, content: string | SendContent): Promise<SendResult>`
-- `sendBatch(messages: BatchMessage[]): Promise<SendResult[]>`
-- `message(msg: Message): MessageChain`
-- `startWatching(config: WatchConfig): Promise<void>`
-- `stopWatching(): void`
-- `getWatcherStatus(): WatcherStatus`
-- `use(plugin: Plugin): this`
-- `close(): Promise<void>`
-
-### Types
-
-See TypeScript definitions for complete type information:
-
-```typescript
-import type { 
-    IMessage,
-    Message, 
-    MessageFilter,
-    SendContent,
-    SendResult,
-    Plugin 
-} from '@sg-hq/imessage-kit'
-```
-
-## Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+For full TypeScript definitions, see the [types](./src/types) directory.
 
 ## License
 
-MIT © GreatSomething
+This project is licensed under the [Server Side Public License v1 (SSPL)](./LICENSE) with additional restrictions.
+
+### Prohibited Use
+
+**You may NOT use this software to create competing products or services**, including but not limited to:
+- iMessage/SMS/RCS messaging SDKs or APIs
+- Messaging automation platforms
+- Similar messaging libraries for macOS
+
+### Permitted Use
+
+You MAY use this software for:
+- Internal business operations and automation
+- Personal projects and non-commercial applications  
+- Educational and research purposes
+- Integration where messaging is not the core feature
+
+For the complete license terms, see the [LICENSE](./LICENSE) file.
 
 ---
 

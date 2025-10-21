@@ -3,7 +3,7 @@
  *
  * @example
  * ```typescript
- * import { IMessageSDK, loggerPlugin } from '@sg-hq/imessage-kit'
+ * import { IMessageSDK, loggerPlugin } from '@photon-ai/imessage-kit'
  *
  * const sdk = new IMessageSDK({
  *   plugins: [loggerPlugin()]

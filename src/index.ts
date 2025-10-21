@@ -1,9 +1,9 @@
 /**
- * @sg-hq/imessage-kit - macOS iMessage 开发工具包
+ * @photon-ai/imessage-kit - macOS iMessage 开发工具包
  *
  * @example
  * ```ts
- * import { IMessageSDK, type IMessage } from '@sg-hq/imessage-kit'
+ * import { IMessageSDK, type IMessage } from '@photon-ai/imessage-kit'
  *
  * const config: IMessage.Config = {
  *   webhook: { url: 'https://your-server.com/webhook' }

@@ -1,15 +1,16 @@
 {
-    "name": "@sg-hq/imessage-kit",
+    "name": "@photon-ai/imessage-kit",
     "version": "1.0.1",
     "description": "A type-safe, elegant iMessage SDK for macOS with zero dependencies",
     "author": "GreatSomething",
-    "license": "MIT",
+    "license": "SSPL-1.0",
     "repository": {
         "type": "git",
         "url": "https://github.com/Something-Great-AI/imessage-kit.git"
     },
     "publishConfig": {
-        "registry": "https://npm.pkg.github.com/"
+        "registry": "https://registry.npmjs.org/",
+        "access": "public"
     },
     "type": "module",
     "main": "./dist/index.cjs",
@@ -22,7 +23,7 @@
             "require": "./dist/index.cjs"
         }
     },
-    "files": ["dist", "README.md"],
+    "files": ["dist", "README.md", "LICENSE"],
     "keywords": ["imessage", "sms", "rcs", "macos", "typescript", "sdk"],
     "scripts": {
         "dev": "tsup --watch",
