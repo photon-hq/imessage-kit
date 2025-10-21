@@ -6,7 +6,7 @@
     "license": "SSPL-1.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/Something-Great-AI/imessage-kit.git"
+        "url": "https://github.com/sg-hq/imessage-kit.git"
     },
     "publishConfig": {
         "registry": "https://registry.npmjs.org/",
