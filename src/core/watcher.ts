@@ -13,8 +13,10 @@ export type MessageCallback = (message: Message) => void | Promise<void>
 
 /** Watcher event callbacks */
 export interface WatcherEvents {
-    /** Triggered when new message arrives */
+    /** Triggered when new 1-on-1 message arrives */
     onNewMessage?: MessageCallback
+    /** Triggered when new group chat message arrives (optional, ignored by default) */
+    onGroupMessage?: MessageCallback
     /** Triggered when error occurs */
     onError?: (error: Error) => void
 }
@@ -108,7 +110,7 @@ export class MessageWatcher {
 
             /** Filter out new messages */
             let newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
-            
+
             /** Filter by unread status if configured */
             if (this.unreadOnly) {
                 newMessages = newMessages.filter((msg) => !msg.isRead)
@@ -148,11 +150,15 @@ export class MessageWatcher {
      */
     private async handleNewMessage(message: Message) {
         try {
-            /** Call plugin's onNewMessage hook */
+            /** Call plugin's onNewMessage hook (always, for all messages) */
             await this.pluginManager?.callHookForAll('onNewMessage', message)
 
-            /** Call event's onNewMessage callback */
-            await this.events.onNewMessage?.(message)
+            /** Dispatch to appropriate event callback based on message type */
+            if (message.isGroupChat) {
+                await this.events.onGroupMessage?.(message)
+            } else {
+                await this.events.onNewMessage?.(message)
+            }
 
             /** Send webhook notification */
             if (this.webhookConfig) await this.sendWebhook(message)

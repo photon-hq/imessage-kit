@@ -56,6 +56,7 @@ export namespace IMessage {
 
     export type Plugin = import('./plugins/core').Plugin
     export type PluginHooks = import('./plugins/core').PluginHooks
+    export type WatcherEvents = import('./core/watcher').WatcherEvents
 
     export type Error = import('./core/errors').IMessageError
     export type ErrorCode = import('./core/errors').ErrorCode

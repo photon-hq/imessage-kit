@@ -149,6 +149,13 @@ await sdk.message(msg)
     .matchText('photo')
     .replyImage(['photo.jpg', 'photo2.jpg'])
     .execute()
+
+// Filter by message type
+await sdk.message(msg)
+    .ifGroupChat()                      // Only process group messages
+    .ifFromOthers()
+    .replyText('Group reply!')
+    .execute()
 ```
 
 ### Real-time Message Watching
@@ -165,7 +172,7 @@ const sdk = new IMessageSDK({
 
 // Start watching for new messages
 await sdk.startWatching({
-    // Callback for new messages
+    // Callback for 1-on-1 messages (default behavior)
     onNewMessage: async (message) => {
         console.log('New message:', message.text)
         
@@ -174,6 +181,13 @@ await sdk.startWatching({
             .ifFromOthers()
             .replyText('Thanks for your message!')
             .execute()
+    },
+    
+    // Optional: Handle group chat messages separately
+    onGroupMessage: async (message) => {
+        console.log('Group message from:', message.sender)
+        console.log('Chat ID:', message.chatId)
+        // Group chat logic here
     },
     
     // Error handler
@@ -185,6 +199,11 @@ await sdk.startWatching({
 // Stop watching when done
 sdk.stopWatching()
 ```
+
+**Message Type Handling:**
+- `onNewMessage` - Receives 1-on-1 direct messages only
+- `onGroupMessage` - Receives group chat messages (optional, ignored by default if not provided)
+- Group messages are automatically filtered out unless you provide `onGroupMessage` callback
 
 ### Webhook Integration
 
@@ -343,6 +362,35 @@ bun run type-check
 - `stopWatching()` - Stop monitoring
 - `use(plugin)` - Register plugin
 - `close()` - Close SDK and release resources
+
+### Message Object
+
+Each message object includes:
+
+```typescript
+interface Message {
+    id: string              // Message ID
+    text: string | null     // Message text content
+    sender: string          // Sender (phone/email)
+    chatId: string          // Chat identifier
+    isGroupChat: boolean    // Whether this is a group chat message
+    isFromMe: boolean       // Whether sent by current user
+    isRead: boolean         // Read status
+    service: ServiceType    // 'iMessage' | 'SMS' | 'RCS'
+    attachments: Attachment[]  // File attachments
+    date: Date              // Message timestamp
+}
+```
+
+### WatcherEvents
+
+```typescript
+interface WatcherEvents {
+    onNewMessage?: (message: Message) => void | Promise<void>
+    onGroupMessage?: (message: Message) => void | Promise<void>
+    onError?: (error: Error) => void
+}
+```
 
 For full TypeScript definitions, see the [types](./src/types) directory.
 
