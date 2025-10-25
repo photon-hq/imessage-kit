@@ -159,7 +159,7 @@ export function insertTestMessage(
 
     // Convert to Mac timestamp (nanoseconds since 2001-01-01)
     const MAC_EPOCH = new Date('2001-01-01T00:00:00Z').getTime()
-    const macTimestamp = (date - MAC_EPOCH) * 1000
+    const macTimestamp = (date - MAC_EPOCH) * 1000000
 
     // Insert message
     const guid = `test-${Date.now()}-${Math.random()}`

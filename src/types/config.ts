@@ -33,7 +33,7 @@ export interface WatcherConfig {
     /** Poll interval in milliseconds (default: 2000) */
     readonly pollInterval?: number
 
-    /** Only watch unread messages (default: true) */
+    /** Only watch unread messages (default: false) */
     readonly unreadOnly?: boolean
 }
 

@@ -130,7 +130,7 @@ export class IMessageSDK {
             webhook: config.webhook ?? null,
             watcher: {
                 pollInterval: clamp(config.watcher?.pollInterval, 100, 60000, 2000),
-                unreadOnly: config.watcher?.unreadOnly !== false,
+                unreadOnly: config.watcher?.unreadOnly ?? false,
             },
             retry: {
                 max: clamp(config.retry?.max, 0, 10, 2),

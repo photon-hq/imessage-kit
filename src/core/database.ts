@@ -175,9 +175,9 @@ export class IMessageDatabase {
 
         if (since) {
             /** Convert to macOS timestamp (nanoseconds since 2001-01-01) */
-            const macTimestamp = (since.getTime() - this.MAC_EPOCH) / 1000
-            query += ' AND message.date > ?'
-            params.push(macTimestamp)
+            const macTimestampNs = (since.getTime() - this.MAC_EPOCH) * 1000000
+            query += ' AND message.date >= ?'
+            params.push(macTimestampNs)
         }
 
         query += ' ORDER BY message.date DESC'

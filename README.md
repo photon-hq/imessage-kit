@@ -20,7 +20,7 @@
 - **Read Messages** - Query iMessage, SMS, and RCS messages with powerful filters
 - **Send Messages** - Send text and images (local files or network URLs)
 - **Fluent API** - Elegant message chain processing
-- **Real-time Watching** - Monitor new messages with webhook support
+- **Real-time Watching** - Monitor new messages with webhook support (works even in Do Not Disturb mode)
 - **Plugin System** - Extensible architecture for custom behaviors
 - **Performance** - Concurrent message sending with semaphore control
 - **Error Handling** - Comprehensive error types and type guards
@@ -158,7 +158,8 @@ await sdk.message(msg)
 const sdk = new IMessageSDK({
     watcher: {
         pollInterval: 3000,  // Check every 3 seconds (default: 2000ms)
-        unreadOnly: true      // Only watch for unread messages (default: true)
+        unreadOnly: false     // Watch all messages (default: false)
+                             // Set to true to only watch unread messages
     }
 })
 
@@ -313,7 +314,16 @@ bun run type-check
 
 > **Note**: The SDK automatically detects your runtime and uses the appropriate database driver.
 
-## Security Notes
+## Important Notes
+
+### Message Watching Behavior
+
+- **Default**: Monitors all new messages (both read and unread)
+- **Works in Do Not Disturb mode**: The watcher uses timestamp-based detection instead of relying on read status
+- **Configuration**: Set `unreadOnly: true` to only monitor unread messages (useful for user-triggered actions)
+- **Recommendation**: For auto-reply bots, keep default `unreadOnly: false` to ensure all messages are captured
+
+### Security
 
 - This SDK reads from the local iMessage database
 - No data is sent to external servers (except your webhook if configured)

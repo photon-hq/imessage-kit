@@ -26,7 +26,7 @@ export class MessageWatcher {
     /** Whether currently running */
     private isRunning = false
     /** Polling timer ID */
-    private intervalId: NodeJS.Timeout | null = null
+    private intervalId: ReturnType<typeof setInterval> | null = null
     /** Whether currently checking */
     private isChecking = false
     /** Last check time (for incremental queries) */
@@ -96,15 +96,23 @@ export class MessageWatcher {
 
         this.isChecking = true
         try {
+            const overlapMs = Math.min(1000, this.pollInterval)
+            const checkStart = new Date()
+            const since = new Date(this.lastCheckTime.getTime() - overlapMs)
+
             const { messages } = await this.database.getMessages({
-                since: this.lastCheckTime,
-                ...(this.unreadOnly && { unreadOnly: true }),
+                since,
             })
 
-            this.lastCheckTime = new Date()
+            this.lastCheckTime = checkStart
 
             /** Filter out new messages */
-            const newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
+            let newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
+            
+            /** Filter by unread status if configured */
+            if (this.unreadOnly) {
+                newMessages = newMessages.filter((msg) => !msg.isRead)
+            }
 
             /** Mark as processed */
             const now = Date.now()

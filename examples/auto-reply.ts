@@ -20,7 +20,6 @@ async function main() {
         debug: true,
         watcher: {
             pollInterval: 2000,
-            unreadOnly: true,
         },
     })
 
