@@ -5,10 +5,10 @@
  * ```ts
  * import { IMessageSDK, type IMessageConfig, type Message } from '@photon-ai/imessage-kit'
  *
- * const config: IMessageConfig = {
+ * const sdk = new IMessageSDK({
+ *   debug: true,
  *   webhook: { url: 'https://your-server.com/webhook' }
- * }
- * const sdk = new IMessageSDK(config)
+ * })
  *
  * /// 获取未读消息
  * const unread = await sdk.getUnreadMessages()
@@ -33,34 +33,38 @@
  * ```
  */
 
-// Core SDK
 export { IMessageSDK } from './core/sdk'
 export { MessageChain } from './core/chain'
 
-// Configuration Types
-export type {
-    IMessageConfig,
-    ResolvedConfig,
-    WebhookConfig,
-    WatcherConfig,
-    RetryConfig,
-    TempFileConfig,
-} from './types/config'
+export namespace IMessage {
+    export type Config = import('./types/config').IMessageConfig
+    export type ResolvedConfig = import('./types/config').ResolvedConfig
+    export type WebhookConfig = import('./types/config').WebhookConfig
+    export type WatcherConfig = import('./types/config').WatcherConfig
+    export type RetryConfig = import('./types/config').RetryConfig
+    export type TempFileConfig = import('./types/config').TempFileConfig
 
-// Message Types
-export type { Message, Attachment, ServiceType, MessageFilter, SendResult } from './types/message'
+    export type Message = import('./types/message').Message
+    export type Attachment = import('./types/message').Attachment
+    export type ServiceType = import('./types/message').ServiceType
+    export type MessageFilter = import('./types/message').MessageFilter
+    export type SendResult = import('./types/message').SendResult
 
-// Advanced Types
-export type { Recipient, Predicate, Mapper } from './types/advanced'
+    export type Recipient = import('./types/advanced').Recipient
+    export type Predicate<T> = import('./types/advanced').Predicate<T>
+    export type Mapper<T, U> = import('./types/advanced').Mapper<T, U>
 
-// Plugin System
+    export type Plugin = import('./plugins/core').Plugin
+    export type PluginHooks = import('./plugins/core').PluginHooks
+    export type WatcherEvents = import('./core/watcher').WatcherEvents
+
+    export type Error = import('./core/errors').IMessageError
+    export type ErrorCode = import('./core/errors').ErrorCode
+}
+
 export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
 export { loggerPlugin, type LoggerOptions } from './plugins/logger'
 
-// Watcher Types
-export type { WatcherEvents, MessageCallback } from './core/watcher'
-
-// Error Handling
 export {
     IMessageError,
     PlatformError,
@@ -71,5 +75,4 @@ export {
     type ErrorCode,
 } from './core/errors'
 
-// Utility Functions
 export { requireMacOS, isMacOS, asRecipient } from './utils/platform'
