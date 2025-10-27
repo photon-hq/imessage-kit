@@ -40,7 +40,7 @@ yarn add @photon-ai/imessage-kit better-sqlite3
 ## Quick Start
 
 ```typescript
-import { IMessageSDK, type IMessage } from '@photon-ai/imessage-kit'
+import { IMessageSDK } from '@photon-ai/imessage-kit'
 
 // Initialize SDK (works in both Node.js and Bun)
 const sdk = new IMessageSDK({

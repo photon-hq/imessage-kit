@@ -8,7 +8,7 @@
  * Usage: bun run examples/auto-reply.ts
  */
 
-import { IMessage, IMessageSDK } from '../src'
+import { IMessageSDK, type Message } from '../src'
 
 declare const process: any
 
@@ -24,7 +24,7 @@ async function main() {
     })
 
     await sdk.startWatching({
-        onNewMessage: async (msg: IMessage.Message) => {
+        onNewMessage: async (msg: Message) => {
             if (processedIds.has(msg.id) || msg.isFromMe) {
                 return
             }
