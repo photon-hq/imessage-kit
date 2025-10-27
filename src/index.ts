@@ -3,9 +3,9 @@
  *
  * @example
  * ```ts
- * import { IMessageSDK, type IMessage } from '@photon-ai/imessage-kit'
+ * import { IMessageSDK, type IMessageConfig, type Message } from '@photon-ai/imessage-kit'
  *
- * const config: IMessage.Config = {
+ * const config: IMessageConfig = {
  *   webhook: { url: 'https://your-server.com/webhook' }
  * }
  * const sdk = new IMessageSDK(config)
@@ -22,7 +22,7 @@
  *
  * /// 链式处理消息
  * await sdk.startWatching({
- *   onNewMessage: async (msg) => {
+ *   onNewMessage: async (msg: Message) => {
  *     await sdk.message(msg)
  *       .ifFromOthers()
  *       .matchText(/hello/i)
@@ -33,38 +33,34 @@
  * ```
  */
 
+// Core SDK
 export { IMessageSDK } from './core/sdk'
 export { MessageChain } from './core/chain'
 
-export namespace IMessage {
-    export type Config = import('./types/config').IMessageConfig
-    export type ResolvedConfig = import('./types/config').ResolvedConfig
-    export type WebhookConfig = import('./types/config').WebhookConfig
-    export type WatcherConfig = import('./types/config').WatcherConfig
-    export type RetryConfig = import('./types/config').RetryConfig
-    export type TempFileConfig = import('./types/config').TempFileConfig
+// Configuration Types
+export type {
+    IMessageConfig,
+    ResolvedConfig,
+    WebhookConfig,
+    WatcherConfig,
+    RetryConfig,
+    TempFileConfig,
+} from './types/config'
 
-    export type Message = import('./types/message').Message
-    export type Attachment = import('./types/message').Attachment
-    export type ServiceType = import('./types/message').ServiceType
-    export type MessageFilter = import('./types/message').MessageFilter
-    export type SendResult = import('./types/message').SendResult
+// Message Types
+export type { Message, Attachment, ServiceType, MessageFilter, SendResult } from './types/message'
 
-    export type Recipient = import('./types/advanced').Recipient
-    export type Predicate<T> = import('./types/advanced').Predicate<T>
-    export type Mapper<T, U> = import('./types/advanced').Mapper<T, U>
+// Advanced Types
+export type { Recipient, Predicate, Mapper } from './types/advanced'
 
-    export type Plugin = import('./plugins/core').Plugin
-    export type PluginHooks = import('./plugins/core').PluginHooks
-    export type WatcherEvents = import('./core/watcher').WatcherEvents
-
-    export type Error = import('./core/errors').IMessageError
-    export type ErrorCode = import('./core/errors').ErrorCode
-}
-
+// Plugin System
 export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
 export { loggerPlugin, type LoggerOptions } from './plugins/logger'
 
+// Watcher Types
+export type { WatcherEvents, MessageCallback } from './core/watcher'
+
+// Error Handling
 export {
     IMessageError,
     PlatformError,
@@ -75,4 +71,5 @@ export {
     type ErrorCode,
 } from './core/errors'
 
+// Utility Functions
 export { requireMacOS, isMacOS, asRecipient } from './utils/platform'
