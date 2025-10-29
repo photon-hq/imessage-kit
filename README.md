@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
 
 It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
-Built for developers who want to integrate messaging into their** AI agents, automation scripts**, or **chat-based apps**, without AppleScript headaches.
+Built for developers who want to integrate messaging into their **AI agents, automation scripts**, or **chat-first apps**, without AppleScript headaches.
 
 ## Features
 
