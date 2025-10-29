@@ -12,6 +12,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
 
+It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
+Built for developers who want to integrate messaging into their** AI agents, automation scripts**, or **chat-based apps**, without AppleScript headaches.
+
 ## Features
 
 - **100% Type-safe** - Full TypeScript support with perfect type inference
