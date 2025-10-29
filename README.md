@@ -53,6 +53,25 @@ npm install @photon-ai/imessage-kit better-sqlite3
 yarn add @photon-ai/imessage-kit better-sqlite3
 ```
 
+## Granting Permission
+
+`IMessageKit` requires **Full Disk Access** to read your chat history and perform automation tasks.
+
+Before starting, make sure to grant the necessary permissions to the IDE or terminal where you plan to run the program:
+
+1. Open **System Settings → Privacy & Security → Full Disk Access**.
+2. Click the **“+”** button and **add** the IDE or terminal you are using.
+
+In the example below, access has been granted to **Zed** and **Terminal**, allowing `IMessageKit` to function properly with both.
+
+If you use other tools such as **Cursor**, **VS Code**, or **Warp**, make sure to grant them permission as well.
+
+<p align="center">
+  <img src="./.github/assets/instruction-1" width="49%">
+  <img src="./.github/assets/instruction-2" width="49%">
+</p>
+
+
 ## Quick Start
 
 ```typescript
