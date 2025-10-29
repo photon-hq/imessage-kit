@@ -28,6 +28,19 @@ Built for developers who want to integrate messaging into their** AI agents, aut
 - **Performance** - Concurrent message sending with semaphore control
 - **Error Handling** - Comprehensive error types and type guards
 
+
+
+## Hello, iMessage 
+```typescript
+import { IMessageSDK } from '@photon-ai/imessage-kit'
+
+const sdk = new IMessageSDK()
+await sdk.send('+1234567890', 'Hello from iMessage Kit!')
+```
+
+
+
+
 ## Installation
 
 ```bash
