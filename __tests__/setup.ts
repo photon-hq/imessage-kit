@@ -245,19 +245,23 @@ export async function waitFor(
 /**
  * Create a spy function that tracks calls
  */
-export function createSpy<T extends (...args: any[]) => any>() {
+export function createSpy<T extends (...args: any[]) => any>(implementation?: T) {
     const calls: Array<{ args: Parameters<T>; result?: ReturnType<T>; error?: Error }> = []
 
-    const spy = (...args: Parameters<T>) => {
+    const spy = ((...args: Parameters<T>) => {
         const call: any = { args }
         calls.push(call)
+        if (implementation) {
+            return implementation(...args)
+        }
         return undefined
-    }
+    }) as T
 
     return {
-        fn: spy as T,
+        fn: spy,
         calls,
         callCount: () => calls.length,
+        getCalls: () => calls.map((c) => c.args[0]),
         reset: () => {
             calls.length = 0
         },

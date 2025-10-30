@@ -21,7 +21,7 @@ Built for developers who want to integrate messaging into their **AI agents, aut
 - **Cross-Runtime** - Supports both Node.js and Bun with automatic runtime detection
 - **Smart Database** - Uses native `bun:sqlite` for Bun, `better-sqlite3` for Node.js
 - **Read Messages** - Query iMessage, SMS, and RCS messages with powerful filters
-- **Send Messages** - Send text and images (local files or network URLs)
+- **Send Messages** - Send text, images, and files (PDF, CSV, VCF, etc.)
 - **Fluent API** - Elegant message chain processing
 - **Real-time Watching** - Monitor new messages with webhook support (works even in Do Not Disturb mode)
 - **Plugin System** - Extensible architecture for custom behaviors
@@ -92,7 +92,8 @@ for (const { sender, messages } of unreadMessages) {
 // Send messages (unified API)
 await sdk.send('+1234567890', 'Hello!')
 await sdk.send('+1234567890', { images: ['photo.jpg'] })
-await sdk.send('+1234567890', { text: 'Check this out', images: ['photo.jpg'] })
+await sdk.send('+1234567890', { files: ['document.pdf', 'contact.vcf'] })
+await sdk.send('+1234567890', { text: 'Check this out', images: ['photo.jpg'], files: ['data.csv'] })
 
 // Always close when done
 await sdk.close()
@@ -137,10 +138,16 @@ await sdk.send('+1234567890', {
     images: ['image1.jpg', 'image2.png'] 
 })
 
-// Send text with images
+// Send files (PDF, CSV, VCF, etc.)
 await sdk.send('+1234567890', { 
-    text: 'Check these photos',
-    images: ['photo.jpg']
+    files: ['document.pdf', 'data.csv', 'contact.vcf'] 
+})
+
+// Send text with images and files
+await sdk.send('+1234567890', { 
+    text: 'Check these files',
+    images: ['photo.jpg'],
+    files: ['report.pdf']
 })
 
 // Send network images (auto-download)
@@ -148,10 +155,16 @@ await sdk.send('+1234567890', {
     images: ['https://example.com/image.jpg'] 
 })
 
+// Convenience methods for files
+await sdk.sendFile('+1234567890', '/path/to/document.pdf')
+await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Here is the contact')
+await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
+
 // Batch sending
 await sdk.sendBatch([
     { to: '+1111111111', content: 'Message 1' },
-    { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } }
+    { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } },
+    { to: '+3333333333', content: { files: ['document.pdf'] } }
 ])
 ```
 
@@ -322,6 +335,7 @@ Check the `examples/` directory for complete examples:
 
 - **[send-hello-world.ts](./examples/send-hello-world.ts)** - Basic message sending
 - **[send-network-image.ts](./examples/send-network-image.ts)** - Send images from URLs
+- **[send-files.ts](./examples/send-files.ts)** - Send files (PDF, CSV, VCF contact cards)
 - **[auto-reply.ts](./examples/auto-reply.ts)** - Auto-reply bot with chain API
 - **[advanced.ts](./examples/advanced.ts)** - Advanced features showcase
 
@@ -377,6 +391,20 @@ bun run type-check
 - **Configuration**: Set `unreadOnly: true` to only monitor unread messages (useful for user-triggered actions)
 - **Recommendation**: For auto-reply bots, keep default `unreadOnly: false` to ensure all messages are captured
 
+### Supported File Types
+
+The SDK supports sending any file type that macOS Messages app accepts, including but not limited to:
+
+- **Documents**: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, RTF
+- **Images**: JPG, PNG, GIF, HEIC, WEBP (auto-converted), AVIF (auto-converted)  
+- **Contact Cards**: VCF (vCard format)
+- **Data Files**: CSV, JSON, XML
+- **Archives**: ZIP, RAR, 7Z
+- **Media**: MP4, MOV, MP3, M4A
+- **And more**: Any file format supported by macOS Messages
+
+**Note**: Large files are automatically uploaded to iCloud when sending via iMessage. For SMS recipients, file size limits may apply depending on your carrier.
+
 ### Security
 
 - This SDK reads from the local iMessage database
@@ -390,7 +418,9 @@ bun run type-check
 
 - `getMessages(filter?)` - Query messages with optional filters
 - `getUnreadMessages()` - Get unread messages grouped by sender
-- `send(to, content)` - Send text and/or images
+- `send(to, content)` - Send text, images, and/or files
+- `sendFile(to, filePath, text?)` - Send a single file
+- `sendFiles(to, filePaths, text?)` - Send multiple files
 - `sendBatch(messages)` - Send multiple messages concurrently
 - `message(msg)` - Create message processing chain
 - `startWatching(events?)` - Start monitoring new messages

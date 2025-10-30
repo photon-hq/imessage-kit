@@ -19,6 +19,8 @@
  * /// 发送消息
  * await sdk.send('+1234567890', 'Hello')
  * await sdk.send('+1234567890', { images: ['/path/to/image.jpg'] })
+ * await sdk.send('+1234567890', { files: ['/path/to/document.pdf'] })
+ * await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Contact info')
  *
  * /// 链式处理消息
  * await sdk.startWatching({

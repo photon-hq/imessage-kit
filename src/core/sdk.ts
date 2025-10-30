@@ -226,14 +226,22 @@ export class IMessageSDK {
      * await sdk.send(phone, 'Hello')
      * await sdk.send(phone, { images: ['/img.jpg'] })
      * await sdk.send(phone, { text: 'Hi', images: ['/img.jpg'] })
+     * await sdk.send(phone, { files: ['/document.pdf', '/contact.vcf'] })
+     * await sdk.send(phone, { text: 'Check this', files: ['/data.csv'] })
      * ```
      */
-    async send(to: string | Recipient, content: string | { text?: string; images?: string[] }): Promise<SendResult> {
+    async send(
+        to: string | Recipient,
+        content: string | { text?: string; images?: string[]; files?: string[] }
+    ): Promise<SendResult> {
         /** Normalize to object format */
         const normalized =
             typeof content === 'string'
-                ? { text: content, images: [] }
-                : { text: content.text, images: content.images || [] }
+                ? { text: content, attachments: [] }
+                : {
+                    text: content.text,
+                    attachments: [...(content.images || []), ...(content.files || [])],
+                }
 
         /** Delegate to sender for validation and sending */
         return this.sendWithHooks(
@@ -242,11 +250,11 @@ export class IMessageSDK {
                 this.sender.send({
                     to: r,
                     text: normalized.text,
-                    attachments: normalized.images,
+                    attachments: normalized.attachments,
                 }),
             {
                 text: normalized.text,
-                attachments: normalized.images,
+                attachments: normalized.attachments,
             }
         )
     }
@@ -276,7 +284,7 @@ export class IMessageSDK {
     async sendBatch(
         messages: Array<{
             to: string | Recipient
-            content: string | { text?: string; images?: string[] }
+            content: string | { text?: string; images?: string[]; files?: string[] }
         }>
     ): Promise<
         Array<{
@@ -311,6 +319,32 @@ export class IMessageSDK {
                 error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
             }
         })
+    }
+
+    /**
+     * Send file (convenience method)
+     *
+     * @example
+     * ```ts
+     * await sdk.sendFile('+1234567890', '/path/to/document.pdf')
+     * await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Here is the contact')
+     * ```
+     */
+    async sendFile(to: string | Recipient, filePath: string, text?: string): Promise<SendResult> {
+        return this.send(to, { text, files: [filePath] })
+    }
+
+    /**
+     * Send multiple files (convenience method)
+     *
+     * @example
+     * ```ts
+     * await sdk.sendFiles('+1234567890', ['/file1.pdf', '/file2.csv'])
+     * await sdk.sendFiles('+1234567890', ['/data.xlsx'], 'Check these files')
+     * ```
+     */
+    async sendFiles(to: string | Recipient, filePaths: string[], text?: string): Promise<SendResult> {
+        return this.send(to, { text, files: filePaths })
     }
 
     // ==================== Message Chain Processing ====================

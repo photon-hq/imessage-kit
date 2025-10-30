@@ -396,4 +396,126 @@ describe('IMessageSDK', () => {
             expect(destroySpy.callCount()).toBeGreaterThan(0)
         })
     })
+
+    describe('File Sending API', () => {
+        it('should accept files parameter in send()', async () => {
+            const sendSpy = createSpy<(options: any) => Promise<{ sentAt: Date }>>(() =>
+                Promise.resolve({ sentAt: new Date() })
+            )
+
+            const mockSender = {
+                send: sendSpy.fn,
+            } as any
+
+            const database = new IMessageDatabase(mockDb.path)
+            const pluginManager = new PluginManager()
+
+            sdk = new IMessageSDK(
+                {},
+                {
+                    database,
+                    sender: mockSender,
+                    pluginManager,
+                }
+            )
+
+            await sdk.send('+1234567890', {
+                files: ['/path/to/file.pdf', '/path/to/contact.vcf'],
+            })
+
+            expect(sendSpy.callCount()).toBe(1)
+            const callArgs = sendSpy.getCalls()[0]
+            expect(callArgs.attachments).toEqual(['/path/to/file.pdf', '/path/to/contact.vcf'])
+        })
+
+        it('should combine images and files in send()', async () => {
+            const sendSpy = createSpy<(options: any) => Promise<{ sentAt: Date }>>(() =>
+                Promise.resolve({ sentAt: new Date() })
+            )
+
+            const mockSender = {
+                send: sendSpy.fn,
+            } as any
+
+            const database = new IMessageDatabase(mockDb.path)
+            const pluginManager = new PluginManager()
+
+            sdk = new IMessageSDK(
+                {},
+                {
+                    database,
+                    sender: mockSender,
+                    pluginManager,
+                }
+            )
+
+            await sdk.send('+1234567890', {
+                text: 'Check these',
+                images: ['/image.jpg'],
+                files: ['/document.pdf'],
+            })
+
+            expect(sendSpy.callCount()).toBe(1)
+            const callArgs = sendSpy.getCalls()[0]
+            expect(callArgs.attachments).toEqual(['/image.jpg', '/document.pdf'])
+            expect(callArgs.text).toBe('Check these')
+        })
+
+        it('should support sendFile() convenience method', async () => {
+            const sendSpy = createSpy<(options: any) => Promise<{ sentAt: Date }>>(() =>
+                Promise.resolve({ sentAt: new Date() })
+            )
+
+            const mockSender = {
+                send: sendSpy.fn,
+            } as any
+
+            const database = new IMessageDatabase(mockDb.path)
+            const pluginManager = new PluginManager()
+
+            sdk = new IMessageSDK(
+                {},
+                {
+                    database,
+                    sender: mockSender,
+                    pluginManager,
+                }
+            )
+
+            await sdk.sendFile('+1234567890', '/path/to/document.pdf', 'Here is the file')
+
+            expect(sendSpy.callCount()).toBe(1)
+            const callArgs = sendSpy.getCalls()[0]
+            expect(callArgs.attachments).toEqual(['/path/to/document.pdf'])
+            expect(callArgs.text).toBe('Here is the file')
+        })
+
+        it('should support sendFiles() convenience method', async () => {
+            const sendSpy = createSpy<(options: any) => Promise<{ sentAt: Date }>>(() =>
+                Promise.resolve({ sentAt: new Date() })
+            )
+
+            const mockSender = {
+                send: sendSpy.fn,
+            } as any
+
+            const database = new IMessageDatabase(mockDb.path)
+            const pluginManager = new PluginManager()
+
+            sdk = new IMessageSDK(
+                {},
+                {
+                    database,
+                    sender: mockSender,
+                    pluginManager,
+                }
+            )
+
+            await sdk.sendFiles('+1234567890', ['/file1.pdf', '/file2.csv'])
+
+            expect(sendSpy.callCount()).toBe(1)
+            const callArgs = sendSpy.getCalls()[0]
+            expect(callArgs.attachments).toEqual(['/file1.pdf', '/file2.csv'])
+        })
+    })
 })
