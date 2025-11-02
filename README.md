@@ -15,6 +15,9 @@
 It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
 Built for developers who want to integrate messaging into their **AI agents, automation scripts**, or **chat-first apps**, without AppleScript headaches.
 
+> [!NOTE]
+> **✨ Looking for advanced features like threaded replies, tapbacks, message editing or unsending, and live typing indicators? Or need enterprise-grade scalability? Check out our [Advanced iMessage Kit](https://github.com/photon-hq/advanced-imessage-kit).**
+
 ## Features
 
 - **100% Type-safe** - Full TypeScript support with perfect type inference
