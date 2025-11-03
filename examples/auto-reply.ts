@@ -8,7 +8,7 @@
  * Usage: bun run examples/auto-reply.ts
  */
 
-import { IMessageSDK, type Message } from '../src'
+import { IMessageSDK, type Message, type Attachment } from '../src'
 
 declare const process: any
 
@@ -25,7 +25,7 @@ async function main() {
 
     await sdk.startWatching({
         onNewMessage: async (msg: Message) => {
-            if (processedIds.has(msg.id) || msg.isFromMe) {
+            if (processedIds.has(msg.id)) {
                 return
             }
 
@@ -43,7 +43,7 @@ async function main() {
             try {
                 // Handle image attachments
                 if (msg.attachments.length > 0) {
-                    const images = msg.attachments.filter(a => a.isImage)
+                    const images = msg.attachments.filter((a: Attachment) => a.isImage)
                     for (const image of images) {
                         console.log(`  Sending image back: ${image.filename}`)
                         await sdk.send(msg.sender, { images: [image.path] })

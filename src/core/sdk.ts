@@ -65,16 +65,10 @@ export class IMessageSDK {
     private destroyed = false
 
     constructor(config: IMessageConfig = {}, dependencies?: SDKDependencies) {
-        /** Check macOS system */
         requireMacOS()
-
-        /** Resolve configuration */
         this.config = this.resolveConfig(config)
-
-        /** Create database */
         this.database = dependencies?.database ?? new IMessageDatabase(this.config.databasePath)
 
-        /** Create temporary file manager */
         this.tempFileManager = new TempFileManager({
             maxAge: this.config.tempFile?.maxAge,
             cleanupInterval: this.config.tempFile?.cleanupInterval,
@@ -82,7 +76,6 @@ export class IMessageSDK {
         })
         this.tempFileManager.start()
 
-        /** Create sender */
         this.sender =
             dependencies?.sender ??
             new MessageSender(
@@ -92,30 +85,25 @@ export class IMessageSDK {
                 this.config.scriptTimeout
             )
 
-        /** Create plugin manager */
         this.pluginManager = dependencies?.pluginManager ?? new PluginManager()
 
-        /** Register plugins (synchronous) */
         if (config.plugins) {
             for (const plugin of config.plugins) {
                 this.pluginManager.use(plugin)
             }
         }
 
-        // Output initialization info in debug mode
         if (this.config.debug) {
             console.log('[SDK] Initialization complete')
         }
     }
 
-    /** Lazy initialize plugins (called on first use) */
     private async ensurePluginsReady() {
         if (!this.pluginManager.initialized) {
             await this.pluginManager.init()
         }
     }
 
-    /** Resolve configuration */
     private resolveConfig(config: IMessageConfig): ResolvedConfig {
         const clamp = (v: number | undefined, min: number, max: number, def: number) => {
             const val = v ?? def
@@ -131,6 +119,7 @@ export class IMessageSDK {
             watcher: {
                 pollInterval: clamp(config.watcher?.pollInterval, 100, 60000, 2000),
                 unreadOnly: config.watcher?.unreadOnly ?? false,
+                excludeOwnMessages: config.watcher?.excludeOwnMessages ?? true,
             },
             retry: {
                 max: clamp(config.retry?.max, 0, 10, 2),
@@ -239,9 +228,9 @@ export class IMessageSDK {
             typeof content === 'string'
                 ? { text: content, attachments: [] }
                 : {
-                    text: content.text,
-                    attachments: [...(content.images || []), ...(content.files || [])],
-                }
+                      text: content.text,
+                      attachments: [...(content.images || []), ...(content.files || [])],
+                  }
 
         /** Delegate to sender for validation and sending */
         return this.sendWithHooks(
@@ -368,6 +357,7 @@ export class IMessageSDK {
             this.database,
             this.config.watcher.pollInterval,
             this.config.watcher.unreadOnly,
+            this.config.watcher.excludeOwnMessages,
             this.config.webhook,
             events,
             this.pluginManager,

@@ -107,24 +107,22 @@ await sdk.close()
 ### Reading Messages
 
 ```typescript
-// Get all messages
+// Get messages (excludes your own by default)
 const result = await sdk.getMessages()
-console.log(`Total: ${result.total}, Retrieved: ${result.messages.length}`)
 
 // Filter messages
 const filtered = await sdk.getMessages({
     sender: '+1234567890',
     unreadOnly: true,
-    service: 'iMessage',
     limit: 20,
     since: new Date('2025-10-20')
 })
 
+// Include your own messages
+const all = await sdk.getMessages({ excludeOwnMessages: false })
+
 // Get unread messages grouped by sender
 const unread = await sdk.getUnreadMessages()
-for (const { sender, messages } of unread) {
-    console.log(`${sender}: ${messages.length} unread`)
-}
 ```
 
 ### Sending Messages
@@ -176,35 +174,28 @@ await sdk.sendBatch([
 The SDK provides a fluent API for elegant message processing:
 
 ```typescript
-// Auto-reply example
+// Basic chain processing
 await sdk.message(msg)
-    .ifFromOthers()                    // Only process messages from others
-    .matchText(/hello/i)               // Match text pattern
-    .replyText('Hi there!')            // Reply with text
-    .execute()                         // Must call execute()
+    .matchText(/hello/i)
+    .replyText('Hi there!')
+    .execute()
 
 // Complex conditions
 await sdk.message(msg)
-    .ifFromOthers()
     .ifUnread()
     .when(m => m.sender.startsWith('+1'))
-    .do(async (m) => {
-        console.log('Processing:', m.text)
-    })
     .replyText('Received!')
     .execute()
 
 // Reply with images
 await sdk.message(msg)
-    .ifFromOthers()
     .matchText('photo')
     .replyImage(['photo.jpg', 'photo2.jpg'])
     .execute()
 
-// Filter by message type
+// Group chat only
 await sdk.message(msg)
-    .ifGroupChat()                      // Only process group messages
-    .ifFromOthers()
+    .ifGroupChat()
     .replyText('Group reply!')
     .execute()
 ```
@@ -212,49 +203,34 @@ await sdk.message(msg)
 ### Real-time Message Watching
 
 ```typescript
-// Initialize SDK with custom watcher config
+// Configure watcher
 const sdk = new IMessageSDK({
     watcher: {
-        pollInterval: 3000,  // Check every 3 seconds (default: 2000ms)
-        unreadOnly: false     // Watch all messages (default: false)
-                             // Set to true to only watch unread messages
+        pollInterval: 3000,        // Check interval (default: 2000ms)
+        unreadOnly: false,         // Watch all messages (default: false)
+        excludeOwnMessages: true   // Exclude own messages (default: true)
     }
 })
 
-// Start watching for new messages
+// Start watching
 await sdk.startWatching({
-    // Callback for 1-on-1 messages (default behavior)
     onNewMessage: async (message) => {
-        console.log('New message:', message.text)
-        
-        // Auto-reply using chain API
         await sdk.message(message)
-            .ifFromOthers()
-            .replyText('Thanks for your message!')
+            .replyText('Thanks!')
             .execute()
     },
     
-    // Optional: Handle group chat messages separately
     onGroupMessage: async (message) => {
-        console.log('Group message from:', message.sender)
-        console.log('Chat ID:', message.chatId)
-        // Group chat logic here
+        console.log('Group:', message.chatId)
     },
     
-    // Error handler
     onError: (error) => {
-        console.error('Watcher error:', error)
+        console.error('Error:', error)
     }
 })
 
-// Stop watching when done
 sdk.stopWatching()
 ```
-
-**Message Type Handling:**
-- `onNewMessage` - Receives 1-on-1 direct messages only
-- `onGroupMessage` - Receives group chat messages (optional, ignored by default if not provided)
-- Group messages are automatically filtered out unless you provide `onGroupMessage` callback
 
 ### Webhook Integration
 
@@ -389,10 +365,9 @@ bun run type-check
 
 ### Message Watching Behavior
 
-- **Default**: Monitors all new messages (both read and unread)
-- **Works in Do Not Disturb mode**: The watcher uses timestamp-based detection instead of relying on read status
-- **Configuration**: Set `unreadOnly: true` to only monitor unread messages (useful for user-triggered actions)
-- **Recommendation**: For auto-reply bots, keep default `unreadOnly: false` to ensure all messages are captured
+- **Automatically excludes your own messages** (set `excludeOwnMessages: false` to include them)
+- Works in Do Not Disturb mode (timestamp-based detection)
+- `onNewMessage` handles 1-on-1 messages, `onGroupMessage` handles group chats
 
 ### Supported File Types
 

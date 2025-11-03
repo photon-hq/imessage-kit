@@ -40,6 +40,7 @@ export class MessageWatcher {
         private database: IMessageDatabase,
         private pollInterval: number,
         private unreadOnly: boolean,
+        private excludeOwnMessages: boolean,
         private webhookConfig: WebhookConfig | null,
         private events: WatcherEvents = {},
         private pluginManager?: PluginManager,
@@ -114,6 +115,11 @@ export class MessageWatcher {
             /** Filter by unread status if configured */
             if (this.unreadOnly) {
                 newMessages = newMessages.filter((msg) => !msg.isRead)
+            }
+
+            /** Filter out own messages if configured (default: true) */
+            if (this.excludeOwnMessages) {
+                newMessages = newMessages.filter((msg) => !msg.isFromMe)
             }
 
             /** Mark as processed */

@@ -63,14 +63,12 @@ async function exampleBrandedTypes() {
 async function exampleFluentChain() {
     console.log('\n=== Fluent Chain Processing Example ===\n')
 
-    // Get unread messages
     const result = await sdk.getMessages({ unreadOnly: true })
 
     // Process each message with fluent chain API
     for (const message of result.messages) {
         await sdk
             .message(message)
-            .ifFromOthers()
             .ifUnread()
             .matchText(/hello|hi/i)
             .replyText((m) => `Hi ${m.sender}! Thanks for your message.`)
@@ -82,7 +80,6 @@ async function exampleFluentChain() {
 async function exampleAdvancedProcessing() {
     console.log('\n=== Advanced Processing Example ===\n')
 
-    // Get all messages
     const result = await sdk.getMessages()
 
     // Process messages with attachments
@@ -90,7 +87,6 @@ async function exampleAdvancedProcessing() {
         if (message.attachments.length > 0) {
             await sdk
                 .message(message)
-                .ifFromOthers()
                 .replyText('Thanks for the message with attachments!')
         }
     }
@@ -105,17 +101,13 @@ async function exampleAutoReplyBot() {
         onNewMessage: async (message) => {
             console.log(`[MSG] New message from: ${message.sender}`)
 
-            // Handle /help command
             await sdk
                 .message(message)
-                .ifFromOthers()
                 .matchText(/^\/help$/i)
                 .replyText('Available commands:\n/help - Show this help\n/time - Show current time')
 
-            // Handle /time command
             await sdk
                 .message(message)
-                .ifFromOthers()
                 .matchText(/^\/time$/i)
                 .replyText(() => `Current time: ${new Date().toLocaleString('en-US')}`)
         },
@@ -139,7 +131,6 @@ async function exampleBatchOperations() {
     for (const msg of result.messages) {
         await sdk
             .message(msg)
-            .ifFromOthers()
             .replyText('Thanks for your message!')
     }
 

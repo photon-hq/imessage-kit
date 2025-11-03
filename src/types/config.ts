@@ -35,6 +35,9 @@ export interface WatcherConfig {
 
     /** Only watch unread messages (default: false) */
     readonly unreadOnly?: boolean
+
+    /** Exclude messages sent by current user (default: true) */
+    readonly excludeOwnMessages?: boolean
 }
 
 // ==================== Retry configuration ====================

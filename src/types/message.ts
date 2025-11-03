@@ -123,6 +123,9 @@ export interface MessageFilter {
     /** Only query unread messages */
     readonly unreadOnly?: boolean
 
+    /** Exclude messages sent by current user (default: true) */
+    readonly excludeOwnMessages?: boolean
+
     // ===== Source filter =====
 
     /** Filter by sender */

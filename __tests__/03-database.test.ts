@@ -58,11 +58,19 @@ describe('IMessageDatabase', () => {
             })
         })
 
-        it('should query all messages', async () => {
+        it('should query all messages (excluding own by default)', async () => {
             const result = await database.getMessages()
 
-            expect(result.messages.length).toBe(3)
+            expect(result.messages.length).toBe(2) // Excludes isFromMe=true by default
+            expect(result.total).toBe(2)
+        })
+
+        it('should include own messages when excludeOwnMessages is false', async () => {
+            const result = await database.getMessages({ excludeOwnMessages: false })
+
+            expect(result.messages.length).toBe(3) // Includes isFromMe=true
             expect(result.total).toBe(3)
+            expect(result.messages.some((m) => m.isFromMe)).toBe(true)
         })
 
         it('should filter unread messages', async () => {

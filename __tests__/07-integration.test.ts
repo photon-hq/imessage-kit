@@ -80,7 +80,6 @@ describe('Integration Tests', () => {
             for (const message of result.messages) {
                 await sdk
                     .message(message)
-                    .ifFromOthers()
                     .ifUnread()
                     .do(() => {
                         processedCount++
@@ -88,7 +87,7 @@ describe('Integration Tests', () => {
                     .execute()
             }
 
-            expect(processedCount).toBe(2) // Only unread messages from others
+            expect(processedCount).toBe(2) // Only unread messages (own messages excluded by default)
         })
 
         it('should handle text matching in chains', async () => {
@@ -132,7 +131,6 @@ describe('Integration Tests', () => {
             for (const message of result.messages) {
                 await sdk
                     .message(message)
-                    .ifFromOthers()
                     .matchText(/^\/help$/i)
                     .do(() => {
                         helpCount++
@@ -141,7 +139,6 @@ describe('Integration Tests', () => {
 
                 await sdk
                     .message(message)
-                    .ifFromOthers()
                     .matchText(/^\/start$/i)
                     .do(() => {
                         startCount++
@@ -339,7 +336,6 @@ describe('Integration Tests', () => {
                 // Handle /help command
                 await sdk
                     .message(message)
-                    .ifFromOthers()
                     .matchText(/^\/help$/i)
                     .do(() => {
                         replies.push({
@@ -352,7 +348,6 @@ describe('Integration Tests', () => {
                 // Handle greeting
                 await sdk
                     .message(message)
-                    .ifFromOthers()
                     .matchText(/^hello$/i)
                     .do(() => {
                         replies.push({

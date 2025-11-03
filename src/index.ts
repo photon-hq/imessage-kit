@@ -1,5 +1,5 @@
 /**
- * @photon-ai/imessage-kit - macOS iMessage 开发工具包
+ * @photon-ai/imessage-kit - macOS iMessage Development Kit
  *
  * @example
  * ```ts
@@ -10,19 +10,19 @@
  *   webhook: { url: 'https://your-server.com/webhook' }
  * })
  *
- * /// 获取未读消息
+ * // Get unread messages
  * const unread = await sdk.getUnreadMessages()
  * for (const { sender, messages } of unread) {
- *   console.log(`${sender}: ${messages.length}条`)
+ *   console.log(`${sender}: ${messages.length} messages`)
  * }
  *
- * /// 发送消息
+ * // Send messages
  * await sdk.send('+1234567890', 'Hello')
  * await sdk.send('+1234567890', { images: ['/path/to/image.jpg'] })
  * await sdk.send('+1234567890', { files: ['/path/to/document.pdf'] })
  * await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Contact info')
  *
- * /// 链式处理消息
+ * // Chain message processing
  * await sdk.startWatching({
  *   onNewMessage: async (msg: Message) => {
  *     await sdk.message(msg)
@@ -38,31 +38,35 @@
 export { IMessageSDK } from './core/sdk'
 export { MessageChain } from './core/chain'
 
-export namespace IMessage {
-    export type Config = import('./types/config').IMessageConfig
-    export type ResolvedConfig = import('./types/config').ResolvedConfig
-    export type WebhookConfig = import('./types/config').WebhookConfig
-    export type WatcherConfig = import('./types/config').WatcherConfig
-    export type RetryConfig = import('./types/config').RetryConfig
-    export type TempFileConfig = import('./types/config').TempFileConfig
+// Configuration types
+export type {
+    IMessageConfig,
+    ResolvedConfig,
+    WebhookConfig,
+    WatcherConfig,
+    RetryConfig,
+    TempFileConfig,
+} from './types/config'
 
-    export type Message = import('./types/message').Message
-    export type Attachment = import('./types/message').Attachment
-    export type ServiceType = import('./types/message').ServiceType
-    export type MessageFilter = import('./types/message').MessageFilter
-    export type SendResult = import('./types/message').SendResult
+// Message types
+export type {
+    Message,
+    Attachment,
+    ServiceType,
+    MessageFilter,
+    MessageQueryResult,
+    SendResult,
+} from './types/message'
 
-    export type Recipient = import('./types/advanced').Recipient
-    export type Predicate<T> = import('./types/advanced').Predicate<T>
-    export type Mapper<T, U> = import('./types/advanced').Mapper<T, U>
+// Advanced types
+export type {
+    Recipient,
+    Predicate,
+    Mapper,
+} from './types/advanced'
 
-    export type Plugin = import('./plugins/core').Plugin
-    export type PluginHooks = import('./plugins/core').PluginHooks
-    export type WatcherEvents = import('./core/watcher').WatcherEvents
-
-    export type Error = import('./core/errors').IMessageError
-    export type ErrorCode = import('./core/errors').ErrorCode
-}
+// Watcher types
+export type { WatcherEvents } from './core/watcher'
 
 export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
 export { loggerPlugin, type LoggerOptions } from './plugins/logger'

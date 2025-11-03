@@ -119,7 +119,7 @@ export class IMessageDatabase {
      */
     async getMessages(filter: MessageFilter = {}): Promise<MessageQueryResult> {
         await this.ensureInit()
-        const { unreadOnly, sender, chatId, service, hasAttachments, since, limit } = filter
+        const { unreadOnly, excludeOwnMessages = true, sender, chatId, service, hasAttachments, since, limit } = filter
 
         let query = `
         SELECT 
@@ -147,6 +147,10 @@ export class IMessageDatabase {
 
         if (unreadOnly) {
             query += ' AND message.is_read = 0'
+        }
+
+        if (excludeOwnMessages) {
+            query += ' AND message.is_from_me = 0'
         }
 
         if (sender) {
