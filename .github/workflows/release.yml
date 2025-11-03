@@ -24,6 +24,11 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         run: npm ci
 
@@ -53,6 +58,11 @@ jobs:
           node-version: 20
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
 
       - name: Install dependencies
         run: npm ci
