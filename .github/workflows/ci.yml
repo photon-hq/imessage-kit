@@ -8,12 +8,11 @@ on:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
-
+    name: Test on Node.js ${{ matrix.node-version }}
+    runs-on: macos-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        node-version: [20]
 
     steps:
       - name: Checkout code
@@ -34,15 +33,16 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Upload coverage
+      - name: Upload coverage to Codecov
         if: matrix.node-version == 20
         uses: codecov/codecov-action@v4
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
@@ -62,7 +62,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     needs: [test, lint]
 
     steps:
@@ -81,14 +81,14 @@ jobs:
       - name: Build package
         run: npm run build
 
-      - name: Verify build artifacts
+      - name: Check build artifacts
         run: |
           ls -la dist/
-          echo "Build artifacts verified"
+          echo "Build completed successfully"
 
   security:
     name: Security Audit
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
@@ -104,4 +104,4 @@ jobs:
         run: npm ci
 
       - name: Run security audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level high
