@@ -117,6 +117,14 @@ jobs:
           echo "- Build Date: ${{ steps.version.outputs.build_date }}" >> CHANGELOG.md
           echo "- Git Hash: ${{ steps.version.outputs.git_hash }}" >> CHANGELOG.md
 
+      - name: Package tarball
+        id: pack
+        run: |
+          # Create a single npm package tarball from built files
+          # We skip lifecycle scripts because the build has already run
+          PACK_FILE=$(npm pack --silent --ignore-scripts)
+          echo "archive=$PACK_FILE" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -125,11 +133,7 @@ jobs:
           body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          files: |
-            dist/*
-            package.json
-            README.md
-            LICENSE
+          files: ${{ steps.pack.outputs.archive }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
