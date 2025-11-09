@@ -1,14 +1,14 @@
 /**
  * Auto-Reply Bot Example
- * 
+ *
  * Behaviors:
  * 1. Text received -> Reply with "original text + hello" + Send network image
  * 2. Image received -> Send the image back
- * 
+ *
  * Usage: bun run examples/auto-reply.ts
  */
 
-import { IMessageSDK, type Message, type Attachment } from '../src'
+import { type Attachment, IMessageSDK, type Message } from '../src'
 
 declare const process: any
 
@@ -35,7 +35,9 @@ async function main() {
             if (processedIds.size > 1000) {
                 const ids = Array.from(processedIds)
                 processedIds.clear()
-                ids.slice(-500).forEach(id => processedIds.add(id))
+                ids.slice(-500).forEach((id) => {
+                    processedIds.add(id)
+                })
             }
 
             console.log(`\n[${new Date().toLocaleTimeString()}] New message from: ${msg.sender}`)
@@ -47,7 +49,7 @@ async function main() {
                     for (const image of images) {
                         console.log(`  Sending image back: ${image.filename}`)
                         await sdk.send(msg.sender, { images: [image.path] })
-                        await new Promise(r => setTimeout(r, 500))
+                        await new Promise((r) => setTimeout(r, 500))
                     }
                 }
 
@@ -57,9 +59,9 @@ async function main() {
                     const reply = `${msg.text} hello`
                     await sdk.send(msg.sender, reply)
                     console.log(`  Replied: ${reply}`)
-                    
-                    await new Promise(r => setTimeout(r, 500))
-                    
+
+                    await new Promise((r) => setTimeout(r, 500))
+
                     await sdk.send(msg.sender, { images: [NETWORK_IMAGE] })
                     console.log(`  Sent network image`)
                 }

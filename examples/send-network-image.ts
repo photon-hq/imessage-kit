@@ -1,11 +1,11 @@
 /**
  * Send Network Image Example
- * 
+ *
  * Demonstrates sending images from remote URLs.
  * The SDK will automatically download and attach the image.
- * 
+ *
  * Usage: bun run examples/send-network-image.ts [recipient1] [recipient2] ...
- * 
+ *
  * Examples:
  *   bun run examples/send-network-image.ts +1234567890
  *   bun run examples/send-network-image.ts user@example.com +1234567890
@@ -27,7 +27,7 @@ function getRecipients(): string[] {
 
 async function test() {
     const recipients = getRecipients()
-    
+
     console.log('Recipients:', recipients.join(', '))
     console.log('Image URL:', TEST_IMAGE_URL)
     console.log()
@@ -48,8 +48,8 @@ async function test() {
             })
         )
 
-        const successful = results.filter(r => r.status === 'fulfilled').length
-        const failed = results.filter(r => r.status === 'rejected').length
+        const successful = results.filter((r) => r.status === 'fulfilled').length
+        const failed = results.filter((r) => r.status === 'rejected').length
         const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
         console.log(`\nDuration: ${duration}s, Success: ${successful}, Failed: ${failed}`)
@@ -63,7 +63,7 @@ async function test() {
         }
 
         console.log('\nWaiting 5 seconds to ensure image uploads to iCloud...')
-        await new Promise(r => setTimeout(r, 5000))
+        await new Promise((r) => setTimeout(r, 5000))
 
         console.log('Done\n')
     } catch (error) {
