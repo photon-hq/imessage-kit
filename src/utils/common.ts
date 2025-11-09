@@ -32,11 +32,33 @@ export function validateMessageContent(
 }
 
 /**
+ * Normalize chatId format
+ * - Extracts GUID from AppleScript group format (e.g., `iMessage;+;chat...` -> `chat...`)
+ * - Returns normalized chatId for consistent handling
+ * @param chatId Chat identifier (may be in various formats)
+ * @returns Normalized chatId
+ */
+export function normalizeChatId(chatId: string): string {
+    // AppleScript group format: iMessage;+;chat...
+    // Extract GUID part (chat...) for normalization
+    if (chatId.includes(';')) {
+        const parts = chatId.split(';')
+        // Check if it matches AppleScript group format: iMessage;+;chat...
+        if (parts.length >= 3 && parts[0] === 'iMessage' && parts[1] === '+' && parts[2]?.startsWith('chat')) {
+            // Extract GUID part (everything after the second semicolon)
+            return parts.slice(2).join(';')
+        }
+    }
+    return chatId
+}
+
+/**
  * Validate chatId format
  * - Must be a non-empty string
- * - Two accepted forms:
+ * - Three accepted forms:
  *   1) Group chats: GUID-like string without semicolon (e.g., `chat...`)
- *   2) DMs: service-prefixed identifier with semicolon (e.g., `iMessage;+1234567890`)
+ *   2) Group chats (AppleScript): `iMessage;+;chat...` format
+ *   3) DMs: service-prefixed identifier with semicolon (e.g., `iMessage;+1234567890`)
  * @throws Error when chatId is invalid
  */
 export function validateChatId(chatId: string): void {
@@ -44,16 +66,25 @@ export function validateChatId(chatId: string): void {
         throw new Error('chatId must be a non-empty string')
     }
 
-    // Accept two forms:
-    // 1) Group chats: GUID-like string without semicolon (e.g., chat GUID)
-    // 2) DMs: service-prefixed identifier with semicolon (e.g., 'iMessage;+1234567890')
+    // Check for AppleScript group format: iMessage;+;chat...
     if (chatId.includes(';')) {
-        const parts = chatId.split(';', 2)
+        const parts = chatId.split(';')
+        // AppleScript group format: iMessage;+;chat...
+        if (parts.length >= 3 && parts[0] === 'iMessage' && parts[1] === '+' && parts[2]?.startsWith('chat')) {
+            // Validate GUID part length
+            const guidPart = parts.slice(2).join(';')
+            if (guidPart.length < 8) {
+                throw new Error('Invalid chatId format: GUID too short')
+            }
+            return
+        }
+
+        // DM format: <service>;<address>
         const service = parts[0] || ''
         const address = parts[1] || ''
         const allowedServices = new Set(['iMessage', 'SMS', 'RCS'])
         if (!allowedServices.has(service) || !address) {
-            throw new Error('Invalid chatId format: expected "<service>;<address>"')
+            throw new Error('Invalid chatId format: expected "<service>;<address>" or group GUID')
         }
         return
     }
