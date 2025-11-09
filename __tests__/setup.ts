@@ -80,6 +80,7 @@ export function createMockDatabase(): { db: DatabaseAdapter; path: string; clean
             ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
             guid TEXT NOT NULL UNIQUE,
             text TEXT,
+            attributedBody BLOB,
             handle_id INTEGER,
             service TEXT,
             date INTEGER,

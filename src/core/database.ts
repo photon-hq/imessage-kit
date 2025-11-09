@@ -7,10 +7,14 @@
  * - Support both Bun and Node.js runtimes
  */
 
-import { homedir } from 'node:os'
+import { exec } from 'node:child_process'
+import { unlink, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Attachment, ChatSummary, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
 import { DatabaseError } from './errors'
+
+const execAsync = promisify(exec)
 
 /** Safe type conversion helper functions */
 const str = (v: unknown, fallback = ''): string => (v == null ? fallback : String(v))
@@ -126,6 +130,7 @@ export class IMessageDatabase {
             message.ROWID as id,
             message.guid,
             message.text,
+            message.attributedBody,
             message.date,
             message.is_read,
             message.is_from_me,
@@ -355,15 +360,159 @@ export class IMessageDatabase {
     }
 
     /**
+     * Decode XML entities in a string
+     * @param text Text with XML entities
+     * @returns Decoded text
+     */
+    private decodeXmlEntities(text: string): string {
+        return text
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+    }
+
+    /**
+     * Extract text from attributedBody (binary plist format)
+     * @param attributedBody Binary plist data
+     * @returns Extracted text or null if extraction fails
+     */
+    private async extractTextFromAttributedBody(attributedBody: unknown): Promise<string | null> {
+        if (!attributedBody) return null
+
+        try {
+            // attributedBody is typically a Buffer in Node.js or Uint8Array in Bun
+            let buffer: Buffer | Uint8Array
+            if (Buffer.isBuffer(attributedBody)) {
+                buffer = attributedBody
+            } else if (attributedBody instanceof Uint8Array) {
+                buffer = Buffer.from(attributedBody)
+            } else {
+                return null
+            }
+
+            // First, try to extract text directly from buffer (faster fallback)
+            // NSAttributedString plist often contains the actual text as readable strings
+            const bufferStr = buffer.toString('utf8')
+            // Look for longer readable text patterns (at least 5 characters) that are likely message content
+            // Exclude common plist keywords like "NSAttributedString", "NSDictionary", etc.
+            const excludedPatterns =
+                /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSMutableString|NSDictionary|NSNumber|NSValue|streamtyped|__kIMMessagePartAttributeName|__kIMPhoneNumberAttributeName|PhoneNumber|NS\.rangeval|locationZNS\.special)$/i
+            const readableMatches = bufferStr.match(/[\x20-\x7E\u4e00-\u9fff]{5,}/g)
+            if (readableMatches) {
+                // Filter out plist keywords and find text that looks like actual message content
+                const messageCandidates = readableMatches
+                    .filter((match) => {
+                        // Exclude plist keywords
+                        if (excludedPatterns.test(match)) return false
+                        // Exclude patterns that look like metadata (contain brackets, colons in wrong places, etc.)
+                        if (/^[\[\(\)\]\*,\-:X]+$/.test(match)) return false
+                        // Exclude NS object property patterns like "NS.rangeval.locationZNS.special"
+                        if (/^NS\.\w+/.test(match)) return false
+                        // Exclude attribute names starting with __kIM
+                        if (/^__kIM/.test(match)) return false
+                        // Exclude plist binary format markers like "$versionY$archiverT$topX$objects"
+                        if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
+                        // Prefer text that contains Chinese characters or looks like actual content
+                        return match.length > 5
+                    })
+                    .map((match) => ({
+                        text: match,
+                        // Score: higher for Chinese characters, longer text, and content-like patterns
+                        score:
+                            (match.match(/[\u4e00-\u9fff]/g)?.length || 0) * 10 +
+                            match.length +
+                            (match.match(/[a-zA-Z]/) ? 5 : 0) -
+                            (match.match(/[\[\(\)\]\*,\-:X]/g)?.length || 0) * 5 -
+                            (match.match(/^__kIM|^NS\.|\$version|\$archiver|\$top|\$objects|\$class/) ? 100 : 0), // Heavily penalize attribute names and plist markers
+                    }))
+                    .sort((a, b) => b.score - a.score) // Sort by score, highest first
+
+                if (messageCandidates.length > 0) {
+                    // Return the highest-scoring candidate that's likely the actual message
+                    const bestCandidate = messageCandidates[0]!
+                    // Clean up common prefixes/suffixes that might be plist artifacts
+                    return bestCandidate.text
+                        .replace(/^\+"/, '') // Remove leading +"
+                        .replace(/"$/, '') // Remove trailing "
+                        .trim()
+                }
+            }
+
+            // If direct extraction didn't work, try plutil (macOS built-in tool)
+            // Write buffer to a temporary file and convert plist to XML
+            const tempFile = join(
+                tmpdir(),
+                `imsg_attributedBody_${Date.now()}_${Math.random().toString(36).substring(7)}.plist`
+            )
+
+            try {
+                await writeFile(tempFile, buffer)
+
+                // Convert binary plist to XML using plutil
+                const { stdout } = await execAsync(`plutil -convert xml1 -o - "${tempFile}"`, {
+                    timeout: 5000,
+                    maxBuffer: 1024 * 1024, // 1MB buffer
+                })
+
+                // Extract string content from NSAttributedString plist
+                // Look for <string> tags in the XML
+                const stringMatches = stdout.match(/<string>([\s\S]*?)<\/string>/g)
+                if (stringMatches && stringMatches.length > 0) {
+                    // Filter out plist keywords and find the actual message text
+                    const textCandidates = stringMatches
+                        .map((match) => {
+                            const textMatch = match.match(/<string>([\s\S]*?)<\/string>/)
+                            return textMatch?.[1]
+                        })
+                        .filter((text): text is string => {
+                            if (!text) return false
+                            // Decode XML entities
+                            const decoded = this.decodeXmlEntities(text)
+                            // Exclude plist keywords
+                            return decoded.length > 5 && !excludedPatterns.test(decoded)
+                        })
+                        .sort((a, b) => b.length - a.length) // Sort by length, longest first
+
+                    if (textCandidates.length > 0) {
+                        // Decode XML entities for the selected candidate
+                        return this.decodeXmlEntities(textCandidates[0]!)
+                    }
+                }
+            } finally {
+                // Clean up temp file
+                try {
+                    await unlink(tempFile)
+                } catch {
+                    // Ignore cleanup errors
+                }
+            }
+        } catch (error) {
+            // If all methods fail, return null
+        }
+
+        return null
+    }
+
+    /**
      * Convert database query result to Message object
      * @param row Raw row data from database query
      * @returns Formatted Message object
      */
     private async rowToMessage(row: Record<string, unknown>): Promise<Message> {
+        // Try to get text from text field first
+        let messageText: string | null = row.text ? str(row.text) : null
+
+        // If text is null and attributedBody exists, try to extract from attributedBody
+        if (!messageText && row.attributedBody) {
+            messageText = await this.extractTextFromAttributedBody(row.attributedBody)
+        }
+
         return {
             id: str(row.id),
             guid: str(row.guid),
-            text: row.text ? str(row.text) : null,
+            text: messageText,
             sender: str(row.sender, 'Unknown'),
             senderName: null,
             chatId: str(row.chat_id),
