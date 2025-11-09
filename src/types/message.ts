@@ -182,3 +182,24 @@ export interface SendResult {
     /** Message sent time */
     readonly sentAt: Date
 }
+
+// ==================== Chat Summary ====================
+
+/**
+ * Chat summary information
+ *
+ * Used by sdk.listChats() to help developers discover chatId
+ */
+export interface ChatSummary {
+    /** Chat identifier (e.g., 'iMessage;+1234567890' or group guid) */
+    readonly chatId: string
+
+    /** Display name (group name or contact name); may be null */
+    readonly displayName: string | null
+
+    /** Time of the last message in this chat; may be null */
+    readonly lastMessageAt: Date | null
+
+    /** Whether this chat is a group */
+    readonly isGroup: boolean
+}

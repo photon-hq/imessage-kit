@@ -20,6 +20,18 @@ export interface WebhookConfig {
 
     /** Request timeout in milliseconds (default: 5000) */
     readonly timeout?: number
+
+    /**
+     * Retry attempts when webhook POST fails (default: 0)
+     * Set to a small number (e.g., 1-3) to improve reliability
+     */
+    readonly retries?: number
+
+    /**
+     * Backoff delay between retries in milliseconds (default: 0)
+     * Example: 500 means wait 500ms before the next retry
+     */
+    readonly backoffMs?: number
 }
 
 // ==================== Watcher configuration ====================

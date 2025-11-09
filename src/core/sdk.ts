@@ -26,8 +26,9 @@ import { type Plugin, PluginManager } from '../plugins/core'
 import type { Recipient } from '../types/advanced'
 import { asRecipient } from '../types/advanced'
 import type { IMessageConfig, ResolvedConfig } from '../types/config'
-import type { Message, MessageFilter, MessageQueryResult, SendResult } from '../types/message'
+import type { Message, MessageFilter, MessageQueryResult, SendResult, ChatSummary } from '../types/message'
 import { getDefaultDatabasePath, requireMacOS } from '../utils/platform'
+import { validateChatId } from '../utils/common'
 import { TempFileManager } from '../utils/temp-file-manager'
 import { MessageChain } from './chain'
 import { IMessageDatabase } from './database'
@@ -60,6 +61,20 @@ export class IMessageSDK {
 
     /** Message watcher */
     private watcher: MessageWatcher | null = null
+
+    /** Scheduled tasks registry */
+    private scheduledTasks = new Map<
+        string,
+        {
+            timeout: ReturnType<typeof setTimeout>
+            chatId: string
+            runAt: Date
+            content: { text?: string; attachments?: string[] }
+        }
+    >()
+
+    /** Schedule ID generator */
+    private nextScheduleId = 1
 
     /** Whether destroyed */
     private destroyed = false
@@ -137,28 +152,26 @@ export class IMessageSDK {
         }
     }
 
-    /** Generic wrapper for sending messages */
-    private async sendWithHooks(
-        to: string | Recipient,
-        sendFn: (recipient: string) => Promise<SendResult>,
+
+    /**
+     * Generic wrapper for sending messages to a chat by chatId
+     */
+    private async sendToChatWithHooks(
+        chatId: string,
+        sendFn: (chatId: string) => Promise<SendResult>,
         content: { text?: string; attachments?: string[] }
     ): Promise<SendResult> {
         if (this.destroyed) throw new Error('SDK is destroyed')
 
-        /** Ensure plugins are ready */
+        // Validate chatId format early (GUID for groups, or "<service>;<address>" for DMs)
+        validateChatId(chatId)
+
         await this.ensurePluginsReady()
+        await this.pluginManager.callHookForAll('onBeforeSend', chatId, content)
 
-        /** Get recipient */
-        const recipient = typeof to === 'string' ? asRecipient(to) : to
+        const result = await sendFn(chatId)
 
-        /** Call before-send hooks */
-        await this.pluginManager.callHookForAll('onBeforeSend', recipient, content)
-
-        /** Send message */
-        const result = await sendFn(recipient)
-
-        /** Call after-send hooks */
-        await this.pluginManager.callHookForAll('onAfterSend', recipient, result)
+        await this.pluginManager.callHookForAll('onAfterSend', chatId, result)
 
         return result
     }
@@ -232,12 +245,47 @@ export class IMessageSDK {
                       attachments: [...(content.images || []), ...(content.files || [])],
                   }
 
-        /** Delegate to sender for validation and sending */
-        return this.sendWithHooks(
-            to,
-            (r) =>
-                this.sender.send({
-                    to: r,
+        // Resolve chatId for plugin hooks, but send via recipient-based path to preserve behavior
+        const recipient = typeof to === 'string' ? asRecipient(to) : to
+        const chatId = recipient.includes(';') ? recipient : `iMessage;${recipient}`
+
+        if (this.destroyed) throw new Error('SDK is destroyed')
+        await this.ensurePluginsReady()
+        await this.pluginManager.callHookForAll('onBeforeSend', chatId, {
+            text: normalized.text,
+            attachments: normalized.attachments,
+        })
+
+        const result = await this.sender.send({
+            to: recipient,
+            text: normalized.text,
+            attachments: normalized.attachments,
+        })
+
+        await this.pluginManager.callHookForAll('onAfterSend', chatId, result)
+        return result
+    }
+
+    /**
+     * Send message to a chat by chatId
+     */
+    async sendToChat(
+        chatId: string,
+        content: string | { text?: string; images?: string[]; files?: string[] }
+    ): Promise<SendResult> {
+        const normalized =
+            typeof content === 'string'
+                ? { text: content, attachments: [] }
+                : {
+                      text: content.text,
+                      attachments: [...(content.images || []), ...(content.files || [])],
+                  }
+
+        return this.sendToChatWithHooks(
+            chatId,
+            (c) =>
+                this.sender.sendToChat({
+                    chatId: c,
                     text: normalized.text,
                     attachments: normalized.attachments,
                 }),
@@ -246,6 +294,28 @@ export class IMessageSDK {
                 attachments: normalized.attachments,
             }
         )
+    }
+
+    /**
+     * List chats for discovering chatId easily
+     *
+     * @example
+     * ```ts
+     * const chats = await sdk.listChats(50)
+     * for (const c of chats) {
+     *   console.log(c.chatId, c.displayName, c.lastMessageAt, c.isGroup)
+     * }
+     * ```
+     */
+    async listChats(limit?: number): Promise<ChatSummary[]> {
+        if (this.destroyed) throw new Error('SDK is destroyed')
+        await this.ensurePluginsReady()
+        // Plugins can observe queries via existing hooks if needed
+        await this.pluginManager.callHookForAll('onBeforeQuery', { limit })
+        const result = await this.database.listChats(limit)
+        // Reuse onAfterQuery to keep plugin ecosystem simple (messages not available here)
+        await this.pluginManager.callHookForAll('onAfterQuery', [])
+        return result
     }
 
     /**
@@ -323,6 +393,11 @@ export class IMessageSDK {
         return this.send(to, { text, files: [filePath] })
     }
 
+    /** Send single file to a chat by chatId */
+    async sendFileToChat(chatId: string, filePath: string, text?: string): Promise<SendResult> {
+        return this.sendToChat(chatId, { text, files: [filePath] })
+    }
+
     /**
      * Send multiple files (convenience method)
      *
@@ -334,6 +409,121 @@ export class IMessageSDK {
      */
     async sendFiles(to: string | Recipient, filePaths: string[], text?: string): Promise<SendResult> {
         return this.send(to, { text, files: filePaths })
+    }
+
+    /** Send multiple files to a chat by chatId */
+    async sendFilesToChat(chatId: string, filePaths: string[], text?: string): Promise<SendResult> {
+        return this.sendToChat(chatId, { text, files: filePaths })
+    }
+
+    // ==================== Scheduled Sending ====================
+
+    /**
+     * Schedule a message by recipient, to be sent at a specific time
+     * Returns a task id that can be cancelled
+     */
+    schedule(
+        to: string | Recipient,
+        content: string | { text?: string; images?: string[]; files?: string[] },
+        at: Date
+    ): string {
+        const recipient = typeof to === 'string' ? asRecipient(to) : to
+        const chatId = recipient.includes(';') ? recipient : `iMessage;${recipient}`
+        return this.scheduleToChat(chatId, content, at)
+    }
+
+    /**
+     * Schedule a message to a chat by chatId, to be sent at a specific time
+     * Returns a task id that can be cancelled
+     */
+    scheduleToChat(
+        chatId: string,
+        content: string | { text?: string; images?: string[]; files?: string[] },
+        at: Date
+    ): string {
+        if (this.destroyed) throw new Error('SDK is destroyed')
+
+        // Validate chatId early
+        validateChatId(chatId)
+
+        const normalized =
+            typeof content === 'string'
+                ? { text: content, attachments: [] }
+                : {
+                      text: content.text,
+                      attachments: [...(content.images || []), ...(content.files || [])],
+                  }
+
+        const now = Date.now()
+        const runAtMs = Math.max(at.getTime(), now)
+        const delayMs = runAtMs - now
+
+        const id = `sch_${Date.now()}_${this.nextScheduleId++}`
+        const timeout = setTimeout(async () => {
+            try {
+                await this.sendToChatWithHooks(
+                    chatId,
+                    (c) =>
+                        this.sender.sendToChat({
+                            chatId: c,
+                            text: normalized.text,
+                            attachments: normalized.attachments,
+                        }),
+                    {
+                        text: normalized.text,
+                        attachments: normalized.attachments,
+                    }
+                )
+            } catch (error) {
+                if (this.config.debug) {
+                    console.error(`[Scheduler] Task ${id} failed:`, error instanceof Error ? error : String(error))
+                }
+            } finally {
+                this.scheduledTasks.delete(id)
+            }
+        }, delayMs)
+
+        this.scheduledTasks.set(id, {
+            timeout,
+            chatId,
+            runAt: new Date(runAtMs),
+            content: normalized,
+        })
+        return id
+    }
+
+    /** Cancel a scheduled task by id */
+    cancelScheduled(id: string): boolean {
+        const task = this.scheduledTasks.get(id)
+        if (!task) return false
+        clearTimeout(task.timeout)
+        this.scheduledTasks.delete(id)
+        return true
+    }
+
+    /** List all scheduled tasks */
+    listScheduled(): Array<{ id: string; chatId: string; runAt: Date; attachments: number; text?: string }> {
+        const result: Array<{ id: string; chatId: string; runAt: Date; attachments: number; text?: string }> = []
+        for (const [id, task] of this.scheduledTasks.entries()) {
+            result.push({
+                id,
+                chatId: task.chatId,
+                runAt: task.runAt,
+                attachments: task.content.attachments?.length ?? 0,
+                text: task.content.text,
+            })
+        }
+        return result
+    }
+
+    /** Clear all scheduled tasks and return the count */
+    clearScheduled(): number {
+        const count = this.scheduledTasks.size
+        for (const [, task] of this.scheduledTasks.entries()) {
+            clearTimeout(task.timeout)
+        }
+        this.scheduledTasks.clear()
+        return count
     }
 
     // ==================== Message Chain Processing ====================
@@ -401,7 +591,17 @@ export class IMessageSDK {
         }
         this.watcher = null
 
-        /** 2. Destroy plugins */
+        /** 2. Clear scheduled tasks */
+        try {
+            this.clearScheduled()
+        } catch (error) {
+            errors.push({
+                component: 'scheduler',
+                error: error instanceof Error ? error : new Error(String(error)),
+            })
+        }
+
+        /** 3. Destroy plugins */
         try {
             await this.pluginManager.destroy()
         } catch (error) {
@@ -411,7 +611,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 3. Destroy temporary file manager (clean up all temp files) */
+        /** 4. Destroy temporary file manager (clean up all temp files) */
         try {
             await this.tempFileManager.destroy()
         } catch (error) {
@@ -421,7 +621,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 4. Close database */
+        /** 5. Close database */
         try {
             this.database.close()
         } catch (error) {

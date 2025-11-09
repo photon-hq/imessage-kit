@@ -10,6 +10,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Attachment, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
+import type { ChatSummary } from '../types/message'
 import { DatabaseError } from './errors'
 
 /** Safe type conversion helper functions */
@@ -232,6 +233,77 @@ export class IMessageDatabase {
         }
 
         return grouped
+    }
+
+    /**
+     * List chats with basic information
+     *
+     * Returns chat identifier, display name, last message time, and group flag.
+     */
+    async listChats(limit?: number): Promise<ChatSummary[]> {
+        await this.ensureInit()
+        let query = `
+        SELECT 
+            chat.chat_identifier AS chat_identifier,
+            chat.guid AS chat_guid,
+            chat.service_name AS service_name,
+            chat.display_name AS display_name,
+            (
+              SELECT MAX(message.date) 
+              FROM chat_message_join cmj 
+              INNER JOIN message ON message.ROWID = cmj.message_id 
+              WHERE cmj.chat_id = chat.ROWID
+            ) AS last_date,
+            (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 AS is_group_chat
+        FROM chat
+        ORDER BY (last_date IS NULL), last_date DESC
+        `
+
+        const params: (string | number)[] = []
+        if (limit && limit > 0) {
+            query += ' LIMIT ?'
+            params.push(limit)
+        }
+
+        try {
+            const rows = this.db.prepare(query).all(...params) as Array<Record<string, unknown>>
+            return rows.map((row) => {
+                const isGroup = bool(row.is_group_chat)
+                const guid = str(row.chat_guid)
+                const identifierRaw = row.chat_identifier == null ? '' : str(row.chat_identifier)
+                const service = row.service_name == null ? '' : str(row.service_name)
+
+                // chatId rules:
+                // - Group chats: use chat.guid (stable routing key)
+                // - Direct chats (DM): prefer database chat_identifier if it already contains a semicolon; otherwise prefix with service_name
+                let chatId: string
+                if (isGroup || !identifierRaw) {
+                    chatId = guid
+                } else if (identifierRaw.includes(';')) {
+                    chatId = identifierRaw
+                } else if (service) {
+                    chatId = `${service};${identifierRaw}`
+                } else {
+                    // In rare cases service_name is missing, default to iMessage prefix for consistency
+                    chatId = `iMessage;${identifierRaw}`
+                }
+
+                const displayName = row.display_name == null ? null : str(row.display_name)
+                const lastDateRaw = row.last_date
+                const lastMessageAt = typeof lastDateRaw === 'number' ? this.convertMacTimestamp(lastDateRaw) : null
+
+                return {
+                    chatId,
+                    displayName,
+                    lastMessageAt,
+                    isGroup,
+                }
+            })
+        } catch (error) {
+            throw DatabaseError(
+                `Failed to list chats: ${error instanceof Error ? error.message : String(error)}`
+            )
+        }
     }
 
     /**

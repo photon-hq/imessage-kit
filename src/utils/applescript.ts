@@ -194,6 +194,25 @@ end tell
 }
 
 /**
+ * Generate AppleScript for sending plain text to a chat by chatId
+ *
+ * @param chatId Chat identifier from Messages database
+ * @param text Message content
+ * @returns AppleScript code
+ */
+export const generateSendTextToChat = (chatId: string, text: string): string => {
+    const escapedText = escapeAppleScriptString(text)
+    const escapedChatId = escapeAppleScriptString(chatId)
+
+    return `
+tell application "Messages"
+    set targetChat to chat id "${escapedChatId}"
+    send "${escapedText}" to targetChat
+end tell
+`.trim()
+}
+
+/**
  * Check if file needs sandbox bypass
  */
 function needsSandboxBypass(filePath: string): boolean {
@@ -224,12 +243,46 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
 }
 
 /**
+ * Generate sandbox bypass script snippet for chatId target
+ */
+function generateSandboxBypassScriptForChat(filePath: string, chatId: string): string {
+    const escapedChatId = escapeAppleScriptString(chatId)
+    const fileName = filePath.split('/').pop()
+    const tempFileName = `imsg_temp_${Date.now()}_${fileName}`
+
+    return `
+    -- Bypass sandbox: copy to Pictures directory
+    set picturesFolder to POSIX path of (path to pictures folder)
+    set targetPath to picturesFolder & "${tempFileName}"
+    do shell script "cp " & quoted form of "${filePath}" & " " & quoted form of targetPath
+    
+    -- Create file reference and send
+    set theFile to (POSIX file targetPath) as alias
+    set targetChat to chat id "${escapedChatId}"
+    send theFile to targetChat
+    `.trim()
+}
+
+/**
  * Generate direct file send script snippet
  */
 function generateDirectSendScript(filePath: string, recipient: string): string {
+    const escapedPath = escapeAppleScriptString(filePath)
     return `
     set targetBuddy to buddy "${recipient}"
-    send POSIX file "${filePath}" to targetBuddy
+    send POSIX file "${escapedPath}" to targetBuddy
+    `.trim()
+}
+
+/**
+ * Generate direct file send script snippet for chatId target
+ */
+function generateDirectSendScriptForChat(filePath: string, chatId: string): string {
+    const escapedChatId = escapeAppleScriptString(chatId)
+    const escapedPath = escapeAppleScriptString(filePath)
+    return `
+    set targetChat to chat id "${escapedChatId}"
+    send POSIX file "${escapedPath}" to targetChat
     `.trim()
 }
 
@@ -255,6 +308,33 @@ export const generateSendAttachmentScript = (
     const sendScript = needsBypass
         ? generateSandboxBypassScript(filePath, recipient)
         : generateDirectSendScript(filePath, recipient)
+
+    return {
+        script: `
+tell application "Messages"
+${sendScript}
+end tell
+        `.trim(),
+    }
+}
+
+/**
+ * Generate AppleScript for sending attachment to a chat by chatId
+ */
+export const generateSendAttachmentToChat = (
+    chatId: string,
+    filePath: string,
+    debug = false
+): { script: string } => {
+    const needsBypass = needsSandboxBypass(filePath)
+
+    if (needsBypass && debug) {
+        console.log('[AppleScript] Non-sandbox directory detected, will temporarily copy to ~/Pictures')
+    }
+
+    const sendScript = needsBypass
+        ? generateSandboxBypassScriptForChat(filePath, chatId)
+        : generateDirectSendScriptForChat(filePath, chatId)
 
     return {
         script: `
@@ -294,6 +374,37 @@ tell application "Messages"
     
     -- Send text
     send "${escapedText}" to targetBuddy
+    
+    -- Send attachment
+${attachmentScript}
+end tell
+        `.trim(),
+    }
+}
+
+/**
+ * Generate AppleScript for sending text with attachment to a chat by chatId
+ */
+export const generateSendWithAttachmentToChat = (
+    chatId: string,
+    text: string,
+    filePath: string
+): { script: string } => {
+    const escapedText = escapeAppleScriptString(text)
+    const escapedChatId = escapeAppleScriptString(chatId)
+    const needsBypass = needsSandboxBypass(filePath)
+
+    const attachmentScript = needsBypass
+        ? generateSandboxBypassScriptForChat(filePath, chatId)
+        : generateDirectSendScriptForChat(filePath, chatId)
+
+    return {
+        script: `
+tell application "Messages"
+    set targetChat to chat id "${escapedChatId}"
+    
+    -- Send text
+    send "${escapedText}" to targetChat
     
     -- Send attachment
 ${attachmentScript}

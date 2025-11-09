@@ -56,6 +56,7 @@ export type {
     MessageFilter,
     MessageQueryResult,
     SendResult,
+    ChatSummary,
 } from './types/message'
 
 // Advanced types

@@ -5,17 +5,17 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Recipient } from '../types/advanced'
-import { isURL as checkIsURL } from '../types/advanced'
+import { isURL as checkIsURL, asRecipient } from '../types/advanced'
 import type { RetryConfig } from '../types/config'
 import {
     checkIMessageStatus,
     checkMessagesApp,
     execAppleScript,
-    generateSendAttachmentScript,
-    generateSendTextScript,
-    generateSendWithAttachmentScript,
+    generateSendAttachmentToChat,
+    generateSendTextToChat,
+    generateSendWithAttachmentToChat,
 } from '../utils/applescript'
-import { delay, validateMessageContent } from '../utils/common'
+import { delay, validateMessageContent, validateChatId } from '../utils/common'
 import { convertToCompatibleFormat, downloadImage } from '../utils/download'
 import { Semaphore } from '../utils/semaphore'
 import { IMessageError, SendError } from './errors'
@@ -29,6 +29,18 @@ export interface SendResult {
 export interface SendOptions {
     /** Recipient */
     readonly to: string | Recipient
+    /** Text content */
+    readonly text?: string
+    /** Attachments */
+    readonly attachments?: readonly string[]
+    /** Abort signal (optional) */
+    readonly signal?: AbortSignal
+}
+
+/** Send options for chatId target */
+export interface SendToChatOptions {
+    /** Chat identifier */
+    readonly chatId: string
     /** Text content */
     readonly text?: string
     /** Attachments */
@@ -196,11 +208,12 @@ export class MessageSender {
         return resolvedPaths
     }
 
+
     /**
-     * Execute send strategy
+     * Execute send strategy for chatId target
      */
-    private async executeSendStrategy(
-        recipient: string,
+    private async executeSendStrategyForChat(
+        chatId: string,
         text: string | undefined,
         hasText: boolean,
         resolvedPaths: string[]
@@ -208,23 +221,23 @@ export class MessageSender {
         if (hasText && resolvedPaths.length > 0) {
             // Strategy 1: Text + Attachments
             const firstAttachment = resolvedPaths[0]!
-            const { script } = generateSendWithAttachmentScript(recipient, text!, firstAttachment)
-            await this.executeWithRetry(script, `Send text and attachment to ${recipient}`)
+            const { script } = generateSendWithAttachmentToChat(chatId, text!, firstAttachment)
+            await this.executeWithRetry(script, `Send text and attachment to chat ${chatId}`)
 
             // Send remaining attachments
             for (let i = 1; i < resolvedPaths.length; i++) {
-                const { script: attachScript } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
+                const { script: attachScript } = generateSendAttachmentToChat(chatId, resolvedPaths[i]!, this.debug)
                 await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
             }
         } else if (hasText) {
             // Strategy 2: Text only
-            const script = generateSendTextScript(recipient, text!)
-            await this.executeWithRetry(script, `Send text to ${recipient}`)
+            const script = generateSendTextToChat(chatId, text!)
+            await this.executeWithRetry(script, `Send text to chat ${chatId}`)
         } else {
             // Strategy 3: Attachments only
             for (let i = 0; i < resolvedPaths.length; i++) {
-                const { script } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
-                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to ${recipient}`
+                const { script } = generateSendAttachmentToChat(chatId, resolvedPaths[i]!, this.debug)
+                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to chat ${chatId}`
                 await this.executeWithRetry(script, description)
             }
         }
@@ -235,7 +248,7 @@ export class MessageSender {
      */
     private async sendInternal(options: SendOptions): Promise<SendResult> {
         const { to, text, attachments = [], signal } = options
-        const recipient = String(to)
+        const rawTarget = String(to)
 
         this.checkAbortSignal(signal)
 
@@ -258,14 +271,96 @@ export class MessageSender {
             // Prepare attachments
             const resolvedPaths = await this.prepareAttachments(attachments)
 
-            // Execute send
-            await this.executeSendStrategy(recipient, text, hasText, resolvedPaths)
+            // Determine chatId target
+            // 1) If provided value is a valid recipient (phone/email), prefix service and route as DM
+            // 2) Otherwise, treat provided value as chatId (supports group GUIDs or service-prefixed DMs)
+            let chatId: string
+            try {
+                const validatedRecipient = asRecipient(rawTarget)
+                chatId = rawTarget.includes(';') ? rawTarget : `iMessage;${validatedRecipient}`
+            } catch {
+                // Not a valid recipient; validate as chatId (GUID or '<service>;<address>')
+                validateChatId(rawTarget)
+                chatId = rawTarget
+            }
+            await this.executeSendStrategyForChat(chatId, text, hasText, resolvedPaths)
 
             return { sentAt: new Date() }
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error)
             const contextInfo =
-                `[Recipient: ${recipient}] ` +
+                `[ChatId: ${(() => {
+                    try {
+                        const validatedRecipient = asRecipient(rawTarget)
+                        return rawTarget.includes(';') ? rawTarget : `iMessage;${validatedRecipient}`
+                    } catch {
+                        return rawTarget
+                    }
+                })()}] ` +
+                `[Text: ${hasText ? 'yes' : 'no'}] ` +
+                `[Attachments: ${attachments.length}]`
+
+            if (error instanceof IMessageError) {
+                throw SendError(`${errorMsg} ${contextInfo}`)
+            }
+
+            throw SendError(`Send failed ${contextInfo}: ${errorMsg}`)
+        }
+    }
+
+    /**
+     * Send message to a chat by chatId
+     */
+    async sendToChat(options: SendToChatOptions): Promise<SendResult> {
+        if (this.semaphore) {
+            return await this.semaphore.run(() => this.sendToChatInternal(options))
+        }
+        return await this.sendToChatInternal(options)
+    }
+
+    /**
+     * Internal implementation for chatId send
+     */
+    private async sendToChatInternal(options: SendToChatOptions): Promise<SendResult> {
+        const { chatId, text, attachments = [], signal } = options
+
+        this.checkAbortSignal(signal)
+
+        // Validate chatId format early
+        try {
+            validateChatId(chatId)
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            throw SendError(errorMsg)
+        }
+
+        // Validate message content
+        let hasText: boolean
+        try {
+            const validation = validateMessageContent(text, attachments)
+            hasText = validation.hasText
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            throw SendError(errorMsg)
+        }
+
+        try {
+            this.checkAbortSignal(signal)
+
+            // Check environment
+            await this.checkMessagesEnvironment()
+
+            // Prepare attachments
+            const resolvedPaths = await this.prepareAttachments(attachments)
+
+            // Execute send (chatId)
+            await this.executeSendStrategyForChat(chatId, text, hasText, resolvedPaths)
+
+            return { sentAt: new Date() }
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            const contextInfo =
+                `[ChatId: ${chatId}] ` +
                 `[Text: ${hasText ? 'yes' : 'no'}] ` +
                 `[Attachments: ${attachments.length}]`
 
@@ -291,5 +386,18 @@ export class MessageSender {
             text,
             attachments: imagePaths,
         })
+    }
+
+    /** Convenience helpers for chatId target */
+    async textToChat(chatId: string, text: string): Promise<SendResult> {
+        return this.sendToChat({ chatId, text })
+    }
+
+    async imageToChat(chatId: string, imagePath: string): Promise<SendResult> {
+        return this.sendToChat({ chatId, attachments: [imagePath] })
+    }
+
+    async textWithImagesToChat(chatId: string, text: string | undefined, imagePaths: string[]): Promise<SendResult> {
+        return this.sendToChat({ chatId, text, attachments: imagePaths })
     }
 }

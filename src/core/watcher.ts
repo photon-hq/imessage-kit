@@ -181,42 +181,58 @@ export class MessageWatcher {
     private async sendWebhook(message: Message): Promise<void> {
         if (!this.webhookConfig) return
 
-        try {
-            const response = await fetch(this.webhookConfig.url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.webhookConfig.headers,
-                },
-                body: JSON.stringify({
-                    event: 'new_message',
-                    message: {
-                        id: message.id,
-                        text: message.text,
-                        sender: message.sender,
-                        senderName: message.senderName,
-                        isRead: message.isRead,
-                        service: message.service,
-                        hasAttachments: message.attachments.length > 0,
-                        attachments: message.attachments.map((a) => ({
-                            filename: a.filename,
-                            mimeType: a.mimeType,
-                            size: a.size,
-                            isImage: a.isImage,
-                        })),
-                        date: message.date.toISOString(),
-                    },
-                    timestamp: new Date().toISOString(),
-                }),
-                signal: AbortSignal.timeout(this.webhookConfig.timeout || 5000),
-            })
+        const retries = this.webhookConfig.retries ?? 0
+        const backoffMs = this.webhookConfig.backoffMs ?? 0
 
-            if (!response.ok) {
-                throw WebhookError(`Webhook failed with status ${response.status}`)
+        let lastError: unknown = null
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const response = await fetch(this.webhookConfig.url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...this.webhookConfig.headers,
+                    },
+                    body: JSON.stringify({
+                        event: 'new_message',
+                        message: {
+                            id: message.id,
+                            text: message.text,
+                            sender: message.sender,
+                            senderName: message.senderName,
+                            isRead: message.isRead,
+                            service: message.service,
+                            hasAttachments: message.attachments.length > 0,
+                            attachments: message.attachments.map((a) => ({
+                                filename: a.filename,
+                                mimeType: a.mimeType,
+                                size: a.size,
+                                isImage: a.isImage,
+                            })),
+                            date: message.date.toISOString(),
+                        },
+                        timestamp: new Date().toISOString(),
+                    }),
+                    signal: AbortSignal.timeout(this.webhookConfig.timeout || 5000),
+                })
+
+                if (!response.ok) {
+                    throw WebhookError(`Webhook failed with status ${response.status}`)
+                }
+                // Success
+                return
+            } catch (error) {
+                lastError = error
+                if (attempt < retries && backoffMs > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, backoffMs))
+                }
             }
-        } catch (error) {
-            throw WebhookError(`Failed to send webhook: ${error instanceof Error ? error.message : String(error)}`)
         }
+        throw WebhookError(
+            `Failed to send webhook: ${
+                lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown error')
+            }`
+        )
     }
 
     /**
