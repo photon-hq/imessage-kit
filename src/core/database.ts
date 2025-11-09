@@ -11,6 +11,7 @@ import { exec } from 'node:child_process'
 import { unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import type { Attachment, ChatSummary, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
 import { DatabaseError } from './errors'
 
