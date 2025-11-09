@@ -178,6 +178,7 @@ await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf',
 // You can still call sdk.send('+1234567890', 'Hello'), which internally
 // converts to the chatId "iMessage;+1234567890" and sends via chat.
 // For email DM: sdk.send('user@example.com', 'Hello') -> "iMessage;user@example.com"
+```
 
 ### Listing Chats
 
@@ -195,7 +196,6 @@ for (const c of chats) {
 ```
 
 Note: `sendToChat(chatId, ...)` accepts both formats above. Also, `sdk.send('+1234567890', 'Hello')` is automatically converted to the DM chatId `iMessage;+1234567890` and sent through the unified chat flow.
-```
 
 ### Message Chain Processing
 
@@ -525,9 +525,9 @@ interface WatcherEvents {
     onGroupMessage?: (message: Message) => void | Promise<void>
     onError?: (error: Error) => void
 }
+```
 
 Note: `onNewMessage` fires for every incoming message (both DM and group). If you only want group processing, use `onGroupMessage` or check `message.isGroupChat` inside `onNewMessage`.
-```
 
 For full TypeScript definitions, see the [types](./src/types) directory.
 
