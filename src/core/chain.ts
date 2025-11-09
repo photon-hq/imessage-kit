@@ -106,7 +106,7 @@ export class MessageChain {
         if (this.shouldExecute) {
             this.actions.push(async () => {
                 const replyText = typeof text === 'function' ? text(this.message) : text
-                await this.sender.text(this.message.sender, replyText)
+                await this.sender.text(this.message.chatId, replyText)
             })
         }
         return this
@@ -120,7 +120,7 @@ export class MessageChain {
             this.actions.push(async () => {
                 const imagePaths = typeof images === 'function' ? images(this.message) : images
                 const paths = Array.isArray(imagePaths) ? imagePaths : [imagePaths]
-                await this.sender.textWithImages(this.message.sender, '', paths)
+                await this.sender.textWithImages(this.message.chatId, '', paths)
             })
         }
         return this
