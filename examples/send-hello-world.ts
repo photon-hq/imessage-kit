@@ -1,8 +1,8 @@
 /**
  * Send "Hello World!" Message Example
- *
+ * 
  * Usage: bun run examples/send-hello-world.ts [recipient1] [recipient2] ...
- *
+ * 
  * Examples:
  *   bun run examples/send-hello-world.ts +1234567890
  *   bun run examples/send-hello-world.ts user@example.com +1234567890
@@ -45,8 +45,8 @@ async function test() {
             })
         )
 
-        const successful = results.filter((r) => r.status === 'fulfilled').length
-        const failed = results.filter((r) => r.status === 'rejected').length
+        const successful = results.filter(r => r.status === 'fulfilled').length
+        const failed = results.filter(r => r.status === 'rejected').length
         const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 
         console.log(`\nDuration: ${duration}s, Success: ${successful}, Failed: ${failed}`)

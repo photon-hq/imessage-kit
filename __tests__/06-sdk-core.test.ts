@@ -10,9 +10,10 @@ import { IMessageDatabase } from '../src/core/database'
 import { IMessageSDK } from '../src/core/sdk'
 import { MessageSender } from '../src/core/sender'
 import { PluginManager } from '../src/plugins/core'
+import { createMockDatabase, createSpy, insertTestMessage } from './setup'
+
 // Import real asRecipient before mocking
 import { asRecipient as realAsRecipient } from '../src/types/advanced'
-import { createMockDatabase, createSpy, insertTestMessage } from './setup'
 
 // Mock platform check to run tests on any OS
 mock.module('../src/utils/platform', () => ({

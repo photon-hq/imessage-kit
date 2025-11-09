@@ -35,45 +35,50 @@
  * ```
  */
 
-export { MessageChain } from './core/chain'
-export {
-    ConfigError,
-    DatabaseError,
-    type ErrorCode,
-    IMessageError,
-    PlatformError,
-    SendError,
-    WebhookError,
-} from './core/errors'
 export { IMessageSDK } from './core/sdk'
-// Watcher types
-export type { WatcherEvents } from './core/watcher'
-export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
-export { type LoggerOptions, loggerPlugin } from './plugins/logger'
-// Advanced types
-export type {
-    Mapper,
-    Predicate,
-    Recipient,
-} from './types/advanced'
+export { MessageChain } from './core/chain'
+
 // Configuration types
 export type {
     IMessageConfig,
     ResolvedConfig,
+    WebhookConfig,
+    WatcherConfig,
     RetryConfig,
     TempFileConfig,
-    WatcherConfig,
-    WebhookConfig,
 } from './types/config'
+
 // Message types
 export type {
-    Attachment,
-    ChatSummary,
     Message,
+    Attachment,
+    ServiceType,
     MessageFilter,
     MessageQueryResult,
     SendResult,
-    ServiceType,
 } from './types/message'
 
-export { asRecipient, isMacOS, requireMacOS } from './utils/platform'
+// Advanced types
+export type {
+    Recipient,
+    Predicate,
+    Mapper,
+} from './types/advanced'
+
+// Watcher types
+export type { WatcherEvents } from './core/watcher'
+
+export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
+export { loggerPlugin, type LoggerOptions } from './plugins/logger'
+
+export {
+    IMessageError,
+    PlatformError,
+    DatabaseError,
+    SendError,
+    WebhookError,
+    ConfigError,
+    type ErrorCode,
+} from './core/errors'
+
+export { requireMacOS, isMacOS, asRecipient } from './utils/platform'

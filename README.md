@@ -168,33 +168,6 @@ await sdk.sendBatch([
     { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } },
     { to: '+3333333333', content: { files: ['document.pdf'] } }
 ])
-
-// Send to a chat by chatId (group or DM)
-// Group chatId uses GUID (no service prefix)
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFileToChat('chat45e2b868ce1e43da89af262922733382', '/path/to/report.pdf')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
-// DM chatId format and auto-conversion
-// You can still call sdk.send('+1234567890', 'Hello'), which internally
-// converts to the chatId "iMessage;+1234567890" and sends via chat.
-// For email DM: sdk.send('user@example.com', 'Hello') -> "iMessage;user@example.com"
-
-### Listing Chats
-
-`listChats()` returns both group and direct chats, providing a stable routing key `chatId`:
-
-- Group: `chatId = chat.guid` (stable GUID, recommended for all group routing)
-- Direct (DM): `chatId = "<service>;<address>"` (for example `iMessage;+1234567890` or `SMS;+1234567890`)
-
-```typescript
-const chats = await sdk.listChats(50) // optional limit
-for (const c of chats) {
-  // Use chatId directly for routing, no need to resolve by name or messages
-  console.log({ chatId: c.chatId, name: c.displayName, last: c.lastMessageAt, isGroup: c.isGroup })
-}
-```
-
-Note: `sendToChat(chatId, ...)` accepts both formats above. Also, `sdk.send('+1234567890', 'Hello')` is automatically converted to the DM chatId `iMessage;+1234567890` and sent through the unified chat flow.
 ```
 
 ### Message Chain Processing
@@ -227,7 +200,6 @@ await sdk.message(msg)
     .replyText('Group reply!')
     .execute()
 ```
-Note: Replies in the chain always target `message.chatId` (supports both DM and group).
 
 ### Real-time Message Watching
 
@@ -308,67 +280,6 @@ const customPlugin = {
 
 sdk.use(customPlugin)
 ```
-
-### Group Chat ChatId: How to Find and Use
-
-Find the `chatId` for a group chat first, then use it to send messages reliably.
-
-1) Find Group ChatId (no database permission required)
-
-- Use the AppleScript helper example to list chats and GUIDs:
-
-```bash
-# List all chats (filters groups only)
-GROUPS_ONLY=true bun run examples/list-chats-applescript.ts
-
-# Filter by name keyword (case-insensitive)
-GROUPS_ONLY=true Q="project" bun run examples/list-chats-applescript.ts
-```
-
-This produces lines like:
-
-```
-chatId=iMessage;+;chat61321855167474084 | name=Project Team | type=GROUP
-```
-
-2) Find Group ChatId (requires Full Disk Access)
-
-- If you prefer a database-backed list with `lastMessageAt` and `displayName`, call `listChats()` or use the example:
-
-```bash
-bun run examples/list-chats.ts
-```
-
-Note: Database access requires granting Full Disk Access under System Settings → Privacy & Security → Full Disk Access for your terminal/IDE.
-
-3) Use the ChatId to send to the group
-
-- Programmatic usage:
-
-```typescript
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
-```
-
-- CLI example using the helper script:
-
-```bash
-# Send a text message
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Hello from iMessage Kit" bun run examples/send-to-group.ts
-
-# Send images/files
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Please check" IMAGES="/path/a.jpg,/path/b.png" bun run examples/send-to-group.ts
-CHAT_ID="iMessage;+;chat61321855167474084" FILES="/path/report.pdf" bun run examples/send-to-group.ts
-```
-
-ChatId formats:
-
-- Group: GUID-like string (often appears as `iMessage;+;chat...` when coming from AppleScript; validated as a group chatId without requiring a semicolon delimiter).
-- DM: `<service>;<address>` (e.g., `iMessage;+1234567890`, `SMS;+1234567890`, `iMessage;user@example.com`).
-
-Validation: passing an invalid `chatId` (unsupported service prefix or malformed GUID) to `sendToChat()` throws early with a clear error.
-
-Plugins: `onBeforeSend` / `onAfterSend` receive the unified target (chatId). If you previously treated `to` as phone/email, update plugins to handle chatIds.
 
 ## Advanced Usage
 
@@ -457,7 +368,7 @@ bun run type-check
 
 - **Automatically excludes your own messages** (set `excludeOwnMessages: false` to include them)
 - Works in Do Not Disturb mode (timestamp-based detection)
-- `onNewMessage` receives all messages (DMs and groups); `onGroupMessage` receives only group chats. Use `message.isGroupChat` to branch if needed.
+- `onNewMessage` handles 1-on-1 messages, `onGroupMessage` handles group chats
 
 ### Supported File Types
 
@@ -479,7 +390,6 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 - No data is sent to external servers (except your webhook if configured)
 - Network images are downloaded to temporary files and cleaned up automatically
 - Always validate user input when building bots
- - ChatId is validated as either a group GUID (no `;`) or a DM identifier in the form `<service>;<address>` (e.g., `iMessage;+1234567890`). Invalid inputs throw early.
 
 ## API Reference
 
@@ -487,7 +397,6 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 
 - `getMessages(filter?)` - Query messages with optional filters
 - `getUnreadMessages()` - Get unread messages grouped by sender
-- `listChats(limit?)` - List chats with `{ chatId, displayName, lastMessageAt, isGroup }`
 - `send(to, content)` - Send text, images, and/or files
 - `sendFile(to, filePath, text?)` - Send a single file
 - `sendFiles(to, filePaths, text?)` - Send multiple files
@@ -525,8 +434,6 @@ interface WatcherEvents {
     onGroupMessage?: (message: Message) => void | Promise<void>
     onError?: (error: Error) => void
 }
-
-Note: `onNewMessage` fires for every incoming message (both DM and group). If you only want group processing, use `onGroupMessage` or check `message.isGroupChat` inside `onNewMessage`.
 ```
 
 For full TypeScript definitions, see the [types](./src/types) directory.

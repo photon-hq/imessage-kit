@@ -71,9 +71,7 @@ export function createMockDatabase(): { db: DatabaseAdapter; path: string; clean
         CREATE TABLE IF NOT EXISTS chat (
             ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_identifier TEXT,
-            display_name TEXT,
-            guid TEXT,
-            service_name TEXT
+            display_name TEXT
         );
 
         CREATE TABLE IF NOT EXISTS message (
@@ -137,20 +135,9 @@ export function insertTestMessage(
         isFromMe?: boolean
         service?: string
         date?: number
-        chatGuid?: string
-        participants?: string[]
     }
 ): number {
-    const {
-        text,
-        sender,
-        isRead = false,
-        isFromMe = false,
-        service = 'iMessage',
-        date = Date.now(),
-        chatGuid,
-        participants = [],
-    } = options
+    const { text, sender, isRead = false, isFromMe = false, service = 'iMessage', date = Date.now() } = options
 
     // Insert or get handle
     const handleResult = db.query('SELECT ROWID FROM handle WHERE id = ?').get(sender)
@@ -165,11 +152,9 @@ export function insertTestMessage(
         handleId = (handleId as any).id
     }
 
-    // Insert chat; if chatGuid provided, treat as group GUID. service_name mirrors message.service
-    const insertChat = db.prepare(
-        'INSERT INTO chat (chat_identifier, display_name, guid, service_name) VALUES (?, ?, ?, ?)'
-    )
-    insertChat.run(sender, null, chatGuid ?? null, service)
+    // Insert chat
+    const insertChat = db.prepare('INSERT INTO chat (chat_identifier, display_name) VALUES (?, ?)')
+    insertChat.run(sender, null)
     let chatId = db.query('SELECT last_insert_rowid() as id').get() as any
     chatId = (chatId as any).id
 
@@ -191,24 +176,9 @@ export function insertTestMessage(
     const insertJoin = db.prepare('INSERT INTO chat_message_join (chat_id, message_id) VALUES (?, ?)')
     insertJoin.run(chatId, messageId)
 
-    // Link primary handle to chat
+    // Link handle to chat
     const insertHandleJoin = db.prepare('INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (?, ?)')
     insertHandleJoin.run(chatId, handleId)
-
-    // Optionally link additional participants to simulate group chat
-    for (const p of participants) {
-        const hr = db.query('SELECT ROWID FROM handle WHERE id = ?').get(p)
-        let hid: number
-        if (hr) {
-            hid = (hr as any).ROWID
-        } else {
-            const insH = db.prepare('INSERT INTO handle (id) VALUES (?)')
-            insH.run(p)
-            const last = db.query('SELECT last_insert_rowid() as id').get() as any
-            hid = (last as any).id
-        }
-        insertHandleJoin.run(chatId, hid)
-    }
 
     return messageId
 }

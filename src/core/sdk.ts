@@ -26,8 +26,7 @@ import { type Plugin, PluginManager } from '../plugins/core'
 import type { Recipient } from '../types/advanced'
 import { asRecipient } from '../types/advanced'
 import type { IMessageConfig, ResolvedConfig } from '../types/config'
-import type { ChatSummary, Message, MessageFilter, MessageQueryResult, SendResult } from '../types/message'
-import { validateChatId } from '../utils/common'
+import type { Message, MessageFilter, MessageQueryResult, SendResult } from '../types/message'
 import { getDefaultDatabasePath, requireMacOS } from '../utils/platform'
 import { TempFileManager } from '../utils/temp-file-manager'
 import { MessageChain } from './chain'
@@ -138,25 +137,28 @@ export class IMessageSDK {
         }
     }
 
-    /**
-     * Generic wrapper for sending messages to a chat by chatId
-     */
-    private async sendToChatWithHooks(
-        chatId: string,
-        sendFn: (chatId: string) => Promise<SendResult>,
+    /** Generic wrapper for sending messages */
+    private async sendWithHooks(
+        to: string | Recipient,
+        sendFn: (recipient: string) => Promise<SendResult>,
         content: { text?: string; attachments?: string[] }
     ): Promise<SendResult> {
         if (this.destroyed) throw new Error('SDK is destroyed')
 
-        // Validate chatId format early (GUID for groups, or "<service>;<address>" for DMs)
-        validateChatId(chatId)
-
+        /** Ensure plugins are ready */
         await this.ensurePluginsReady()
-        await this.pluginManager.callHookForAll('onBeforeSend', chatId, content)
 
-        const result = await sendFn(chatId)
+        /** Get recipient */
+        const recipient = typeof to === 'string' ? asRecipient(to) : to
 
-        await this.pluginManager.callHookForAll('onAfterSend', chatId, result)
+        /** Call before-send hooks */
+        await this.pluginManager.callHookForAll('onBeforeSend', recipient, content)
+
+        /** Send message */
+        const result = await sendFn(recipient)
+
+        /** Call after-send hooks */
+        await this.pluginManager.callHookForAll('onAfterSend', recipient, result)
 
         return result
     }
@@ -230,47 +232,12 @@ export class IMessageSDK {
                       attachments: [...(content.images || []), ...(content.files || [])],
                   }
 
-        // Resolve chatId for plugin hooks, but send via recipient-based path to preserve behavior
-        const recipient = typeof to === 'string' ? asRecipient(to) : to
-        const chatId = recipient.includes(';') ? recipient : `iMessage;${recipient}`
-
-        if (this.destroyed) throw new Error('SDK is destroyed')
-        await this.ensurePluginsReady()
-        await this.pluginManager.callHookForAll('onBeforeSend', chatId, {
-            text: normalized.text,
-            attachments: normalized.attachments,
-        })
-
-        const result = await this.sender.send({
-            to: recipient,
-            text: normalized.text,
-            attachments: normalized.attachments,
-        })
-
-        await this.pluginManager.callHookForAll('onAfterSend', chatId, result)
-        return result
-    }
-
-    /**
-     * Send message to a chat by chatId
-     */
-    async sendToChat(
-        chatId: string,
-        content: string | { text?: string; images?: string[]; files?: string[] }
-    ): Promise<SendResult> {
-        const normalized =
-            typeof content === 'string'
-                ? { text: content, attachments: [] }
-                : {
-                      text: content.text,
-                      attachments: [...(content.images || []), ...(content.files || [])],
-                  }
-
-        return this.sendToChatWithHooks(
-            chatId,
-            (c) =>
-                this.sender.sendToChat({
-                    chatId: c,
+        /** Delegate to sender for validation and sending */
+        return this.sendWithHooks(
+            to,
+            (r) =>
+                this.sender.send({
+                    to: r,
                     text: normalized.text,
                     attachments: normalized.attachments,
                 }),
@@ -279,28 +246,6 @@ export class IMessageSDK {
                 attachments: normalized.attachments,
             }
         )
-    }
-
-    /**
-     * List chats for discovering chatId easily
-     *
-     * @example
-     * ```ts
-     * const chats = await sdk.listChats(50)
-     * for (const c of chats) {
-     *   console.log(c.chatId, c.displayName, c.lastMessageAt, c.isGroup)
-     * }
-     * ```
-     */
-    async listChats(limit?: number): Promise<ChatSummary[]> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
-        await this.ensurePluginsReady()
-        // Plugins can observe queries via existing hooks if needed
-        await this.pluginManager.callHookForAll('onBeforeQuery', { limit })
-        const result = await this.database.listChats(limit)
-        // Reuse onAfterQuery to keep plugin ecosystem simple (messages not available here)
-        await this.pluginManager.callHookForAll('onAfterQuery', [])
-        return result
     }
 
     /**
@@ -378,11 +323,6 @@ export class IMessageSDK {
         return this.send(to, { text, files: [filePath] })
     }
 
-    /** Send single file to a chat by chatId */
-    async sendFileToChat(chatId: string, filePath: string, text?: string): Promise<SendResult> {
-        return this.sendToChat(chatId, { text, files: [filePath] })
-    }
-
     /**
      * Send multiple files (convenience method)
      *
@@ -394,11 +334,6 @@ export class IMessageSDK {
      */
     async sendFiles(to: string | Recipient, filePaths: string[], text?: string): Promise<SendResult> {
         return this.send(to, { text, files: filePaths })
-    }
-
-    /** Send multiple files to a chat by chatId */
-    async sendFilesToChat(chatId: string, filePaths: string[], text?: string): Promise<SendResult> {
-        return this.sendToChat(chatId, { text, files: filePaths })
     }
 
     // ==================== Message Chain Processing ====================

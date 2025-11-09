@@ -126,58 +126,6 @@ describe('Common Utils', () => {
             expect(() => validateMessageContent('   ', undefined)).toThrow('Message must contain text or attachments')
         })
     })
-
-    describe('validateChatId', () => {
-        it('should accept pure GUID format (group chat)', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('chat61321855167474084')).not.toThrow()
-            expect(() => validateChatId('chat45e2b868ce1e43da89af262922733382')).not.toThrow()
-        })
-
-        it('should accept DM format', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('iMessage;+1234567890')).not.toThrow()
-            expect(() => validateChatId('SMS;+1234567890')).not.toThrow()
-            expect(() => validateChatId('iMessage;user@example.com')).not.toThrow()
-        })
-
-        it('should accept AppleScript group format', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('iMessage;+;chat61321855167474084')).not.toThrow()
-            expect(() => validateChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).not.toThrow()
-        })
-
-        it('should reject invalid formats', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('')).toThrow('chatId must be a non-empty string')
-            expect(() => validateChatId('invalid')).toThrow('Invalid chatId format: GUID too short')
-            expect(() => validateChatId('iMessage;+;chat123')).toThrow('Invalid chatId format: GUID too short')
-            expect(() => validateChatId('InvalidService;+1234567890')).toThrow('Invalid chatId format')
-            expect(() => validateChatId('iMessage;')).toThrow('Invalid chatId format')
-        })
-    })
-
-    describe('normalizeChatId', () => {
-        it('should normalize AppleScript group format to GUID', async () => {
-            const { normalizeChatId } = await import('../src/utils/common')
-
-            expect(normalizeChatId('iMessage;+;chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).toBe(
-                'chat45e2b868ce1e43da89af262922733382'
-            )
-        })
-
-        it('should return unchanged for other formats', async () => {
-            const { normalizeChatId } = await import('../src/utils/common')
-
-            expect(normalizeChatId('chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('iMessage;+1234567890')).toBe('iMessage;+1234567890')
-        })
-    })
 })
 
 describe('Semaphore', () => {

@@ -1,12 +1,12 @@
 export {
+    PluginManager,
     definePlugin,
     type Plugin,
     type PluginHooks,
-    PluginManager,
 } from './core'
 
 export {
+    loggerPlugin,
     type LoggerOptions,
     type LogLevel,
-    loggerPlugin,
 } from './logger'

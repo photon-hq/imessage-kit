@@ -1,6 +1,6 @@
 /**
  * Advanced Examples - IMessage SDK
- *
+ * 
  * This file demonstrates advanced usage patterns including:
  * - Plugin system and configuration
  * - Type-safe recipient validation
@@ -10,7 +10,7 @@
  * - Resource cleanup with Symbol.dispose
  */
 
-import { asRecipient, IMessageSDK, loggerPlugin } from '../src/index'
+import { IMessageSDK, asRecipient, loggerPlugin } from '../src/index'
 
 // ==================== Create SDK Instance (with plugins) ====================
 
@@ -85,7 +85,9 @@ async function exampleAdvancedProcessing() {
     // Process messages with attachments
     for (const message of result.messages) {
         if (message.attachments.length > 0) {
-            await sdk.message(message).replyText('Thanks for the message with attachments!')
+            await sdk
+                .message(message)
+                .replyText('Thanks for the message with attachments!')
         }
     }
 }
@@ -125,17 +127,19 @@ async function exampleBatchOperations() {
 
     // Method 1: Process unread messages in sequence
     const result = await sdk.getMessages({ unreadOnly: true })
-
+    
     for (const msg of result.messages) {
-        await sdk.message(msg).replyText('Thanks for your message!')
+        await sdk
+            .message(msg)
+            .replyText('Thanks for your message!')
     }
 
     // Method 2: Send batch messages with concurrency control
     const recipients = ['+1234567890', '+0987654321', 'user@example.com']
     const batchResults = await sdk.sendBatch(
-        recipients.map((to) => ({
+        recipients.map(to => ({
             to,
-            content: 'Batch message notification',
+            content: 'Batch message notification'
         }))
     )
 
@@ -176,13 +180,13 @@ async function exampleMessageFiltering() {
     // Query with various filters
     const recentMessages = await sdk.getMessages({
         limit: 10,
-        unreadOnly: false,
+        unreadOnly: false
     })
     console.log(`Found ${recentMessages.messages.length} recent messages`)
 
     // Query only unread messages
     const unreadMessages = await sdk.getMessages({
-        unreadOnly: true,
+        unreadOnly: true
     })
     console.log(`Found ${unreadMessages.messages.length} unread messages`)
 
