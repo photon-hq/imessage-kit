@@ -245,16 +245,12 @@ const sdk = new IMessageSDK({
     }
 })
 
-// Start watching
+// Start watching for direct messages
 await sdk.startWatching({
-    onNewMessage: async (message) => {
+    onDirectMessage: async (message) => {
         await sdk.message(message)
             .replyText('Thanks!')
             .execute()
-    },
-    
-    onGroupMessage: async (message) => {
-        console.log('Group:', message.chatId)
     },
     
     onError: (error) => {
@@ -263,6 +259,36 @@ await sdk.startWatching({
 })
 
 sdk.stopWatching()
+```
+
+**More examples:**
+
+```typescript
+// Watch all messages (DMs + groups)
+await sdk.startWatching({
+    onMessage: async (message) => {
+        console.log(`New message from ${message.sender}: ${message.text}`)
+    }
+})
+
+// Watch only group messages
+await sdk.startWatching({
+    onGroupMessage: async (message) => {
+        console.log(`Group message in ${message.chatId}`)
+    }
+})
+
+// Watch both DMs and groups separately
+await sdk.startWatching({
+    onDirectMessage: async (message) => {
+        // Handle DM
+        await sdk.send(message.sender, 'Thanks for your DM!')
+    },
+    onGroupMessage: async (message) => {
+        // Handle group message
+        console.log(`Group: ${message.chatId}`)
+    }
+})
 ```
 
 ### Webhook Integration
@@ -462,7 +488,7 @@ bun run type-check
 
 - **Automatically excludes your own messages** (set `excludeOwnMessages: false` to include them)
 - Works in Do Not Disturb mode (timestamp-based detection)
-- `onNewMessage` receives all messages (DMs and groups); `onGroupMessage` receives only group chats. Use `message.isGroupChat` to branch if needed.
+- Use `onMessage` for all messages, `onDirectMessage` for DMs only, or `onGroupMessage` for groups only
 
 ### Supported File Types
 
@@ -526,13 +552,17 @@ interface Message {
 
 ```typescript
 interface WatcherEvents {
-    onNewMessage?: (message: Message) => void | Promise<void>
-    onGroupMessage?: (message: Message) => void | Promise<void>
+    onMessage?: (message: Message) => void | Promise<void>        // All messages
+    onDirectMessage?: (message: Message) => void | Promise<void> // DMs only
+    onGroupMessage?: (message: Message) => void | Promise<void>  // Groups only
     onError?: (error: Error) => void
 }
 ```
 
-Note: `onNewMessage` fires for every incoming message (both DM and group). If you only want group processing, use `onGroupMessage` or check `message.isGroupChat` inside `onNewMessage`.
+**Callback execution order:**
+1. `onMessage` - fires for all messages (if defined)
+2. `onDirectMessage` or `onGroupMessage` - fires based on message type
+3. Webhook notification (if configured)
 
 For full TypeScript definitions, see the [types](./src/types) directory.
 

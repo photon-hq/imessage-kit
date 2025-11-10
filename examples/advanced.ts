@@ -96,7 +96,7 @@ async function exampleAutoReplyBot() {
     console.log('\n=== Auto-Reply Bot Example ===\n')
 
     await sdk.startWatching({
-        onNewMessage: async (message) => {
+        onDirectMessage: async (message) => {
             console.log(`[MSG] New message from: ${message.sender}`)
 
             await sdk

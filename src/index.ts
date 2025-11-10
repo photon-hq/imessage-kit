@@ -24,7 +24,7 @@
  *
  * // Chain message processing
  * await sdk.startWatching({
- *   onNewMessage: async (msg: Message) => {
+ *   onDirectMessage: async (msg: Message) => {
  *     await sdk.message(msg)
  *       .ifFromOthers()
  *       .matchText(/hello/i)

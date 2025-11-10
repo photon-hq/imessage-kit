@@ -13,9 +13,11 @@ export type MessageCallback = (message: Message) => void | Promise<void>
 
 /** Watcher event callbacks */
 export interface WatcherEvents {
-    /** Triggered when new 1-on-1 message arrives */
-    onNewMessage?: MessageCallback
-    /** Triggered when new group chat message arrives (optional, ignored by default) */
+    /** Triggered when any new message arrives (DM or group) */
+    onMessage?: MessageCallback
+    /** Triggered when new direct message arrives */
+    onDirectMessage?: MessageCallback
+    /** Triggered when new group message arrives */
     onGroupMessage?: MessageCallback
     /** Triggered when error occurs */
     onError?: (error: Error) => void
@@ -159,11 +161,14 @@ export class MessageWatcher {
             /** Call plugin's onNewMessage hook (always, for all messages) */
             await this.pluginManager?.callHookForAll('onNewMessage', message)
 
-            /** Dispatch to appropriate event callback based on message type */
+            /** Call onMessage for all messages */
+            await this.events.onMessage?.(message)
+
+            /** Dispatch to specific callbacks based on message type */
             if (message.isGroupChat) {
                 await this.events.onGroupMessage?.(message)
             } else {
-                await this.events.onNewMessage?.(message)
+                await this.events.onDirectMessage?.(message)
             }
 
             /** Send webhook notification */

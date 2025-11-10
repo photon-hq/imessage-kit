@@ -24,7 +24,7 @@ async function main() {
     })
 
     await sdk.startWatching({
-        onNewMessage: async (msg: Message) => {
+        onDirectMessage: async (msg: Message) => {
             if (processedIds.has(msg.id)) {
                 return
             }
