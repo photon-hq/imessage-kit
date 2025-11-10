@@ -27,6 +27,7 @@ import { type Recipient, asRecipient } from '../types/advanced'
 import type { IMessageConfig, ResolvedConfig } from '../types/config'
 import type {
     ChatSummary,
+    ListChatsOptions,
     Message,
     MessageFilter,
     MessageQueryResult,
@@ -327,23 +328,42 @@ export class IMessageSDK {
     }
 
     /**
-     * List chats for discovering chatId easily
+     * List chats with filtering and sorting options
+     *
+     * @param options Filter and sort options (or a number for backward compatibility)
+     * @returns Array of chat summaries with unread counts
      *
      * @example
      * ```ts
-     * const chats = await sdk.listChats(50)
-     * for (const c of chats) {
-     *   console.log(c.chatId, c.displayName, c.lastMessageAt, c.isGroup)
-     * }
+     * // Get all chats
+     * const all = await sdk.listChats()
+     *
+     * // Get recent group chats with unread messages
+     * const groups = await sdk.listChats({
+     *   type: 'group',
+     *   hasUnread: true,
+     *   limit: 20
+     * })
+     *
+     * // Search chats by name
+     * const found = await sdk.listChats({
+     *   search: 'John',
+     *   sortBy: 'name'
+     * })
+     *
+     * // Backward compatible: limit only
+     * const recent = await sdk.listChats({ limit: 50 })
      * ```
      */
-    async listChats(limit?: number): Promise<ChatSummary[]> {
+    async listChats(options?: ListChatsOptions | number): Promise<ChatSummary[]> {
         if (this.destroyed) throw new Error('SDK is destroyed')
         await this.ensurePluginsReady()
-        // Plugins can observe queries via existing hooks if needed
-        await this.pluginManager.callHookForAll('onBeforeQuery', { limit })
-        const result = await this.database.listChats(limit)
-        // Reuse onAfterQuery to keep plugin ecosystem simple (messages not available here)
+
+        // Backward compatibility: convert number to options object
+        const opts: ListChatsOptions = typeof options === 'number' ? { limit: options } : options || {}
+
+        await this.pluginManager.callHookForAll('onBeforeQuery', opts)
+        const result = await this.database.listChats(opts)
         await this.pluginManager.callHookForAll('onAfterQuery', [])
         return result
     }

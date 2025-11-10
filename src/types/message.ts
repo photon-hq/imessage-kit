@@ -205,6 +205,26 @@ export interface SendResult {
 // ==================== Chat Summary ====================
 
 /**
+ * Options for listing chats
+ */
+export interface ListChatsOptions {
+    /** Maximum number of chats to return */
+    limit?: number
+
+    /** Filter by chat type */
+    type?: 'all' | 'group' | 'dm'
+
+    /** Only return chats with unread messages */
+    hasUnread?: boolean
+
+    /** Sort order */
+    sortBy?: 'recent' | 'name'
+
+    /** Search by display name (case-insensitive) */
+    search?: string
+}
+
+/**
  * Chat summary information
  *
  * Used by sdk.listChats() to help developers discover chatId
@@ -221,4 +241,7 @@ export interface ChatSummary {
 
     /** Whether this chat is a group */
     readonly isGroup: boolean
+
+    /** Number of unread messages in this chat */
+    readonly unreadCount: number
 }

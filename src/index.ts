@@ -71,6 +71,7 @@ export type {
 export type {
     Attachment,
     ChatSummary,
+    ListChatsOptions,
     Message,
     MessageFilter,
     MessageQueryResult,

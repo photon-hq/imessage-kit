@@ -184,18 +184,43 @@ await sdk.sendBatch([
 
 ### Listing Chats
 
-`listChats()` returns both group and direct chats, providing a stable routing key `chatId`:
-
-- Group: `chatId = chat.guid` (stable GUID, recommended for all group routing)
-- Direct (DM): `chatId = "<service>;<address>"` (for example `iMessage;+1234567890` or `SMS;+1234567890`)
+`listChats()` returns both group and direct chats with filtering and sorting options:
 
 ```typescript
-const chats = await sdk.listChats(50) // optional limit
+// Get all chats
+const all = await sdk.listChats()
+
+// Get recent group chats with unread messages
+const groups = await sdk.listChats({
+    type: 'group',
+    hasUnread: true,
+    limit: 20
+})
+
+// Search chats by name
+const found = await sdk.listChats({
+    search: 'John',
+    sortBy: 'name'
+})
+
+// Backward compatible: limit only
+const recent = await sdk.listChats(50)
+
+// Each chat includes unreadCount
 for (const c of chats) {
-  // Use chatId directly for routing, no need to resolve by name or messages
-  console.log({ chatId: c.chatId, name: c.displayName, last: c.lastMessageAt, isGroup: c.isGroup })
+  console.log({
+    chatId: c.chatId,
+    name: c.displayName,
+    last: c.lastMessageAt,
+    isGroup: c.isGroup,
+    unread: c.unreadCount  // ← New field
+  })
 }
 ```
+
+**ChatId formats:**
+- Group: `chatId = chat.guid` (stable GUID, recommended for all group routing)
+- Direct (DM): `chatId = "<service>;<address>"` (for example `iMessage;+1234567890` or `SMS;+1234567890`)
 
 **Note on ChatId formats:**
 - Group chats: Use the GUID from `listChats()` (e.g., `chat45e2b868ce1e43da89af262922733382`)
@@ -520,7 +545,7 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 
 - `getMessages(filter?)` - Query messages with optional filters
 - `getUnreadMessages()` - Get unread messages with statistics (total, senderCount, groups)
-- `listChats(limit?)` - List chats with `{ chatId, displayName, lastMessageAt, isGroup }`
+- `listChats(options?)` - List chats with filtering/sorting (type, hasUnread, sortBy, search, limit)
 - `send(to, content)` - Send text, images, and/or files (auto-detects recipient or chatId)
 - `sendFile(to, filePath, text?)` - Send a single file (supports recipient or chatId)
 - `sendFiles(to, filePaths, text?)` - Send multiple files (supports recipient or chatId)
