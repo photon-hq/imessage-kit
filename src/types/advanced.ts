@@ -7,8 +7,17 @@
 /**
  * Phone number format regex
  * Supports international format, spaces, hyphens, and parentheses
+ * Must contain at least one digit
  */
 const PHONE_REGEX = /^\+?[\d\s\-()]+$/
+
+/**
+ * Check if string contains at least minimum number of digits
+ */
+const hasMinDigits = (str: string, min: number): boolean => {
+    const digits = str.replace(/\D/g, '')
+    return digits.length >= min
+}
 
 /**
  * Email format regex
@@ -51,7 +60,13 @@ export const asRecipient = (value: string): Recipient => {
         throw new TypeError('Recipient cannot be empty')
     }
 
-    if (PHONE_REGEX.test(normalized) || EMAIL_REGEX.test(normalized)) {
+    // Check email first (more specific)
+    if (EMAIL_REGEX.test(normalized)) {
+        return normalized
+    }
+
+    // Check phone number format and minimum digits
+    if (PHONE_REGEX.test(normalized) && hasMinDigits(normalized, 3)) {
         return normalized
     }
 

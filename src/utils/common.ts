@@ -53,6 +53,51 @@ export function normalizeChatId(chatId: string): string {
 }
 
 /**
+ * Check if a chatId represents a group chat (not a DM)
+ *
+ * @param chatId The chat identifier to check
+ * @returns true if it's a group chat, false if it's a DM
+ */
+export function isGroupChatId(chatId: string): boolean {
+    // AppleScript group format: iMessage;+;chat...
+    if (chatId.startsWith('iMessage;+;chat')) {
+        return true
+    }
+
+    // Pure GUID format (no semicolon, starts with 'chat')
+    if (!chatId.includes(';') && chatId.startsWith('chat') && chatId.length > 10) {
+        return true
+    }
+
+    return false
+}
+
+/**
+ * Extract recipient from a service-prefixed chatId
+ *
+ * @param chatId The chat identifier (e.g., 'iMessage;+1234567890')
+ * @returns The recipient part (e.g., '+1234567890'), or null if not a DM format
+ */
+export function extractRecipientFromChatId(chatId: string): string | null {
+    if (!chatId.includes(';')) {
+        return null
+    }
+
+    // Skip group chat formats
+    if (isGroupChatId(chatId)) {
+        return null
+    }
+
+    // Extract recipient from service-prefixed format: service;recipient
+    const parts = chatId.split(';')
+    if (parts.length === 2) {
+        return parts[1] || null
+    }
+
+    return null
+}
+
+/**
  * Validate chatId format
  * - Must be a non-empty string
  * - Three accepted forms:

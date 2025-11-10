@@ -20,7 +20,7 @@ describe('MessageChain', () => {
             text: 'Hello world',
             sender: '+1234567890',
             senderName: null,
-            chatId: 'chat1',
+            chatId: '+1234567890', // Use valid recipient format for DM
             isGroupChat: false,
             service: 'iMessage',
             isRead: false,
@@ -30,189 +30,188 @@ describe('MessageChain', () => {
         }
 
         mockSender = {
-            text: async () => {},
-            textWithImages: async () => {},
+            send: async () => ({ sentAt: new Date() }),
+            sendToGroup: async () => ({ sentAt: new Date() }),
         }
     })
 
     describe('Conditional Filters', () => {
         it('should filter messages from others', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain1 = new MessageChain({ ...mockMessage, isFromMe: false }, mockSender)
             await chain1.ifFromOthers().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
 
-            textSpy.reset()
+            sendSpy.reset()
             const chain2 = new MessageChain({ ...mockMessage, isFromMe: true }, mockSender)
             await chain2.ifFromOthers().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
 
         it('should filter unread messages', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain1 = new MessageChain({ ...mockMessage, isRead: false }, mockSender)
             await chain1.ifUnread().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
 
-            textSpy.reset()
+            sendSpy.reset()
             const chain2 = new MessageChain({ ...mockMessage, isRead: true }, mockSender)
             await chain2.ifUnread().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
 
         it('should filter group chat messages', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            // For group chat, chatId should be a GUID
+            mockSender.sendToGroup = sendSpy.fn
 
-            const chain1 = new MessageChain({ ...mockMessage, isGroupChat: true }, mockSender)
+            const chain1 = new MessageChain({ ...mockMessage, chatId: 'chat123456789', isGroupChat: true }, mockSender)
             await chain1.ifGroupChat().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
 
-            textSpy.reset()
+            sendSpy.reset()
+            mockSender.send = sendSpy.fn
             const chain2 = new MessageChain({ ...mockMessage, isGroupChat: false }, mockSender)
             await chain2.ifGroupChat().replyText('Reply').execute()
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
 
         it('should support custom predicates with when()', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain
                 .when((m) => m.sender.startsWith('+1'))
                 .replyText('Reply')
                 .execute()
-
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should chain multiple filters', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, isFromMe: false, isRead: false }, mockSender)
             await chain.ifFromOthers().ifUnread().replyText('Reply').execute()
-
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should short-circuit on false condition', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, isFromMe: true }, mockSender)
             await chain.ifFromOthers().ifUnread().replyText('Reply').execute()
-
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
     })
 
     describe('Text Matching', () => {
         it('should match text with string', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, text: 'Hello world' }, mockSender)
             await chain.matchText('Hello').replyText('Reply').execute()
 
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should match text with regex', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, text: 'Hello world' }, mockSender)
             await chain.matchText(/hello/i).replyText('Reply').execute()
 
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should not match when text is null', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, text: null }, mockSender)
             await chain.matchText('Hello').replyText('Reply').execute()
 
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
 
         it('should not match when text does not contain pattern', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, text: 'Hello world' }, mockSender)
             await chain.matchText('Goodbye').replyText('Reply').execute()
 
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
 
         it('should be case-sensitive for string matching', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, text: 'Hello world' }, mockSender)
             await chain.matchText('hello').replyText('Reply').execute()
 
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
     })
 
     describe('Reply Actions', () => {
         it('should reply with text string', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain.replyText('Reply message').execute()
 
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should reply with text function', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain.replyText((m) => `Hi ${m.sender}`).execute()
 
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should reply with image', async () => {
-            const imageSpy = createSpy<() => Promise<void>>()
-            mockSender.textWithImages = imageSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain.replyImage('/path/to/image.jpg').execute()
 
-            expect(imageSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should reply with multiple images', async () => {
-            const imageSpy = createSpy<() => Promise<void>>()
-            mockSender.textWithImages = imageSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain.replyImage(['/path/1.jpg', '/path/2.jpg']).execute()
 
-            expect(imageSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should not send when chain is disabled', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain({ ...mockMessage, isFromMe: true }, mockSender)
             await chain.ifFromOthers().replyText('Should not send').execute()
 
-            expect(textSpy.callCount()).toBe(0)
+            expect(sendSpy.callCount()).toBe(0)
         })
     })
 
@@ -252,8 +251,8 @@ describe('MessageChain', () => {
 
     describe('execute', () => {
         it('should execute all queued actions', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             chain.replyText('First')
@@ -261,12 +260,12 @@ describe('MessageChain', () => {
 
             await chain.execute()
 
-            expect(textSpy.callCount()).toBe(2)
+            expect(sendSpy.callCount()).toBe(2)
         })
 
         it('should mark as executed', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
             chain.replyText('Message')
@@ -275,14 +274,14 @@ describe('MessageChain', () => {
 
             // Note: Current implementation allows multiple executions
             // This is a design decision - each execute() will run all queued actions
-            expect(textSpy.callCount()).toBeGreaterThanOrEqual(1)
+            expect(sendSpy.callCount()).toBeGreaterThanOrEqual(1)
         })
     })
 
     describe('Complex Chains', () => {
         it('should handle complex filtering and actions', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const message: Message = {
                 ...mockMessage,
@@ -300,12 +299,12 @@ describe('MessageChain', () => {
                 .replyText('Available commands: /help, /start')
                 .execute()
 
-            expect(textSpy.callCount()).toBe(1)
+            expect(sendSpy.callCount()).toBe(1)
         })
 
         it('should allow multiple conditional branches', async () => {
-            const textSpy = createSpy<() => Promise<void>>()
-            mockSender.text = textSpy.fn
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
 
             const chain1 = new MessageChain({ ...mockMessage, text: '/help' }, mockSender)
             await chain1.matchText('/help').replyText('Help message').execute()
@@ -313,7 +312,7 @@ describe('MessageChain', () => {
             const chain2 = new MessageChain({ ...mockMessage, text: '/start' }, mockSender)
             await chain2.matchText('/start').replyText('Start message').execute()
 
-            expect(textSpy.callCount()).toBe(2)
+            expect(sendSpy.callCount()).toBe(2)
         })
     })
 })

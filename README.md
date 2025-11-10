@@ -129,13 +129,19 @@ const unread = await sdk.getUnreadMessages()
 ### Sending Messages
 
 ```typescript
-// Unified send API
-await sdk.send(recipient, content)
+// Unified send API - automatically detects recipient or chatId
+await sdk.send(target, content)
 
-// Send text only
+// Send to phone number
 await sdk.send('+1234567890', 'Hello World!')
 
-// Send images only
+// Send to email
+await sdk.send('user@example.com', 'Hello!')
+
+// Send to group chat (using chatId)
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+
+// Send images
 await sdk.send('+1234567890', { 
     images: ['image1.jpg', 'image2.png'] 
 })
@@ -157,28 +163,22 @@ await sdk.send('+1234567890', {
     images: ['https://example.com/image.jpg'] 
 })
 
-// Convenience methods for files
+// Convenience methods for files (works with both recipient and chatId)
 await sdk.sendFile('+1234567890', '/path/to/document.pdf')
-await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Here is the contact')
+await sdk.sendFile('chat123...', '/path/to/report.pdf', 'Here is the file')
 await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
 
 // Batch sending
 await sdk.sendBatch([
     { to: '+1111111111', content: 'Message 1' },
     { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } },
-    { to: '+3333333333', content: { files: ['document.pdf'] } }
+    { to: 'chat123...', content: { files: ['document.pdf'] } }
 ])
-
-// Send to a chat by chatId (group or DM)
-// Group chatId uses GUID (no service prefix)
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFileToChat('chat45e2b868ce1e43da89af262922733382', '/path/to/report.pdf')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
-// DM chatId format and auto-conversion
-// You can still call sdk.send('+1234567890', 'Hello'), which internally
-// converts to the chatId "iMessage;+1234567890" and sends via chat.
-// For email DM: sdk.send('user@example.com', 'Hello') -> "iMessage;user@example.com"
 ```
+
+**Note**: The `send()` method automatically detects whether you're sending to:
+- A **recipient** (phone number or email): `'+1234567890'`, `'user@example.com'`
+- A **chatId** (group or DM): `'chat123...'`, `'iMessage;+1234567890'`
 
 ### Listing Chats
 
@@ -195,7 +195,11 @@ for (const c of chats) {
 }
 ```
 
-Note: `sendToChat(chatId, ...)` accepts both formats above. Also, `sdk.send('+1234567890', 'Hello')` is automatically converted to the DM chatId `iMessage;+1234567890` and sent through the unified chat flow.
+**Note on ChatId formats:**
+- Group chats: Use the GUID from `listChats()` (e.g., `chat45e2b868ce1e43da89af262922733382`)
+- Direct messages: Use phone/email directly (e.g., `+1234567890`, `user@example.com`)
+- The SDK also accepts AppleScript format `iMessage;+;chat...` for groups (auto-normalized)
+- Service-prefixed DMs like `iMessage;+1234567890` are supported (from database)
 
 ### Message Chain Processing
 
@@ -346,8 +350,9 @@ Note: Database access requires granting Full Disk Access under System Settings â
 - Programmatic usage:
 
 ```typescript
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
+// Use the unified send() method - it automatically detects chatId
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+await sdk.sendFiles('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
 ```
 
 - CLI example using the helper script:
@@ -366,7 +371,7 @@ ChatId formats:
 - Group: GUID-like string (often appears as `iMessage;+;chat...` when coming from AppleScript; validated as a group chatId without requiring a semicolon delimiter).
 - DM: `<service>;<address>` (e.g., `iMessage;+1234567890`, `SMS;+1234567890`, `iMessage;user@example.com`).
 
-Validation: passing an invalid `chatId` (unsupported service prefix or malformed GUID) to `sendToChat()` throws early with a clear error.
+Validation: passing an invalid `chatId` (unsupported service prefix or malformed GUID) to `send()` throws early with a clear error.
 
 Plugins: `onBeforeSend` / `onAfterSend` receive the unified target (chatId). If you previously treated `to` as phone/email, update plugins to handle chatIds.
 
@@ -488,9 +493,9 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 - `getMessages(filter?)` - Query messages with optional filters
 - `getUnreadMessages()` - Get unread messages grouped by sender
 - `listChats(limit?)` - List chats with `{ chatId, displayName, lastMessageAt, isGroup }`
-- `send(to, content)` - Send text, images, and/or files
-- `sendFile(to, filePath, text?)` - Send a single file
-- `sendFiles(to, filePaths, text?)` - Send multiple files
+- `send(to, content)` - Send text, images, and/or files (auto-detects recipient or chatId)
+- `sendFile(to, filePath, text?)` - Send a single file (supports recipient or chatId)
+- `sendFiles(to, filePaths, text?)` - Send multiple files (supports recipient or chatId)
 - `sendBatch(messages)` - Send multiple messages concurrently
 - `message(msg)` - Create message processing chain
 - `startWatching(events?)` - Start monitoring new messages

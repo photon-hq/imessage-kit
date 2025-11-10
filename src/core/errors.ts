@@ -11,9 +11,10 @@ export type ErrorCode = 'PLATFORM' | 'DATABASE' | 'SEND' | 'WEBHOOK' | 'CONFIG' 
 export class IMessageError extends Error {
     constructor(
         public readonly code: ErrorCode,
-        message: string
+        message: string,
+        options?: ErrorOptions
     ) {
-        super(message)
+        super(message, options)
         this.name = 'IMessageError'
         Error.captureStackTrace?.(this, this.constructor)
     }
@@ -30,8 +31,12 @@ export class IMessageError extends Error {
 }
 
 /** Factory functions */
-export const PlatformError = (msg = 'Only macOS is supported') => new IMessageError('PLATFORM', msg)
-export const DatabaseError = (msg: string) => new IMessageError('DATABASE', msg)
-export const SendError = (msg: string) => new IMessageError('SEND', msg)
-export const WebhookError = (msg: string) => new IMessageError('WEBHOOK', msg)
-export const ConfigError = (msg: string) => new IMessageError('CONFIG', msg)
+export const PlatformError = (msg = 'Only macOS is supported', cause?: Error) =>
+    new IMessageError('PLATFORM', msg, cause ? { cause } : undefined)
+export const DatabaseError = (msg: string, cause?: Error) =>
+    new IMessageError('DATABASE', msg, cause ? { cause } : undefined)
+export const SendError = (msg: string, cause?: Error) => new IMessageError('SEND', msg, cause ? { cause } : undefined)
+export const WebhookError = (msg: string, cause?: Error) =>
+    new IMessageError('WEBHOOK', msg, cause ? { cause } : undefined)
+export const ConfigError = (msg: string, cause?: Error) =>
+    new IMessageError('CONFIG', msg, cause ? { cause } : undefined)
