@@ -201,8 +201,8 @@ export class IMessageDatabase {
         }
 
         if (search) {
-            query += ' AND message.text LIKE ?'
-            params.push(`%${search}%`)
+            query += ' AND (message.text LIKE ? OR message.attributedBody LIKE ?)'
+            params.push(`%${search}%`, `%${search}%`)
         }
 
         query += ' ORDER BY message.date DESC'

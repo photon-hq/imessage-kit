@@ -7,6 +7,7 @@ import type { WebhookConfig } from '../types/config'
 import type { Message } from '../types/message'
 import type { IMessageDatabase } from './database'
 import { WebhookError } from './errors'
+import type { OutgoingMessageManager } from './outgoing-manager'
 
 /** Message callback */
 export type MessageCallback = (message: Message) => void | Promise<void>
@@ -46,9 +47,11 @@ export class MessageWatcher {
         private webhookConfig: WebhookConfig | null,
         private events: WatcherEvents = {},
         private pluginManager?: PluginManager,
-        private debug = false
+        private debug = false,
+        private outgoingManager?: OutgoingMessageManager
     ) {
-        this.lastCheckTime = new Date()
+        // Start from 10 seconds ago to catch recently sent messages
+        this.lastCheckTime = new Date(Date.now() - 10000)
     }
 
     /**
@@ -107,12 +110,25 @@ export class MessageWatcher {
 
             const { messages } = await this.database.getMessages({
                 since,
+                excludeOwnMessages: false, // Always fetch own messages for outgoing resolution
             })
 
             this.lastCheckTime = checkStart
 
             /** Filter out new messages */
             let newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
+
+            /** Try to resolve outgoing messages BEFORE filtering (critical for reliable send) */
+            if (this.outgoingManager) {
+                for (const msg of newMessages) {
+                    if (msg.isFromMe) {
+                        const matched = this.outgoingManager.tryResolve(msg)
+                        if (this.debug && matched) {
+                            console.log(`[Watcher] Resolved outgoing message: ${msg.id}`)
+                        }
+                    }
+                }
+            }
 
             /** Filter by unread status if configured */
             if (this.unreadOnly) {
@@ -144,6 +160,11 @@ export class MessageWatcher {
                     }
                 }
             }
+
+            /** Cleanup resolved outgoing message promises */
+            if (this.outgoingManager) {
+                this.outgoingManager.cleanup()
+            }
         } catch (error) {
             this.handleError(error)
         } finally {
@@ -158,7 +179,7 @@ export class MessageWatcher {
      */
     private async handleNewMessage(message: Message) {
         try {
-            /** Call plugin's onNewMessage hook (always, for all messages) */
+            /** Call plugin's onNewMessage hook */
             await this.pluginManager?.callHookForAll('onNewMessage', message)
 
             /** Call onMessage for all messages */

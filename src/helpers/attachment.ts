@@ -9,6 +9,15 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { Attachment } from '../types/message'
 
+/** Supported image file extensions */
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'tiff', 'svg'] as const
+
+/** Supported video file extensions */
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv', 'webm'] as const
+
+/** Supported audio file extensions */
+const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'wma'] as const
+
 /**
  * Check if attachment file exists on disk
  *
@@ -163,9 +172,8 @@ export function getAttachmentExtension(attachment: Attachment): string {
  * ```
  */
 export function isImageAttachment(attachment: Attachment): boolean {
-    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'tiff', 'svg']
     const ext = getAttachmentExtension(attachment)
-    return imageExtensions.includes(ext)
+    return IMAGE_EXTENSIONS.includes(ext as any)
 }
 
 /**
@@ -175,9 +183,8 @@ export function isImageAttachment(attachment: Attachment): boolean {
  * @returns True if attachment is a video file
  */
 export function isVideoAttachment(attachment: Attachment): boolean {
-    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv', 'webm']
     const ext = getAttachmentExtension(attachment)
-    return videoExtensions.includes(ext)
+    return VIDEO_EXTENSIONS.includes(ext as any)
 }
 
 /**
@@ -187,7 +194,6 @@ export function isVideoAttachment(attachment: Attachment): boolean {
  * @returns True if attachment is an audio file
  */
 export function isAudioAttachment(attachment: Attachment): boolean {
-    const audioExtensions = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'wma']
     const ext = getAttachmentExtension(attachment)
-    return audioExtensions.includes(ext)
+    return AUDIO_EXTENSIONS.includes(ext as any)
 }

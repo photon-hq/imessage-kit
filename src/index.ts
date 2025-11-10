@@ -47,7 +47,7 @@ export {
     WebhookError,
 } from './core/errors'
 export { IMessageSDK } from './core/sdk'
-export type { SendOptions, SendToGroupOptions } from './core/sender'
+export type { SendOptions, SendResult, SendToGroupOptions } from './core/sender'
 // Watcher types
 export type { WatcherEvents } from './core/watcher'
 export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
@@ -75,7 +75,6 @@ export type {
     Message,
     MessageFilter,
     MessageQueryResult,
-    SendResult,
     ServiceType,
     UnreadMessagesResult,
 } from './types/message'

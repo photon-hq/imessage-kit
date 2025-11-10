@@ -197,15 +197,7 @@ export interface UnreadMessagesResult {
     readonly senderCount: number
 }
 
-/**
- * Send result
- *
- * Represents successful message sending result
- */
-export interface SendResult {
-    /** Message sent time */
-    readonly sentAt: Date
-}
+// SendResult moved to src/core/sender.ts to include message field
 
 // ==================== Chat Summary ====================
 

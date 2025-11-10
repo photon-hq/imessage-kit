@@ -220,6 +220,24 @@ function needsSandboxBypass(filePath: string): boolean {
 }
 
 /**
+ * Calculate delay based on file size
+ * Small files: 2s, Medium files: 3s, Large files: 5s
+ */
+function calculateFileDelay(filePath: string): number {
+    try {
+        const fs = require('node:fs')
+        const stats = fs.statSync(filePath)
+        const sizeInMB = stats.size / (1024 * 1024)
+
+        if (sizeInMB < 1) return 2 // < 1MB: 2 seconds
+        if (sizeInMB < 10) return 3 // 1-10MB: 3 seconds
+        return 5 // > 10MB: 5 seconds
+    } catch {
+        return 3 // Default to 3 seconds if file size check fails
+    }
+}
+
+/**
  * Generate sandbox bypass script snippet
  *
  * Copy file to ~/Pictures/imsg_temp_* to bypass sandbox restrictions
@@ -228,6 +246,7 @@ function needsSandboxBypass(filePath: string): boolean {
 function generateSandboxBypassScript(filePath: string, recipient: string): string {
     const fileName = filePath.split('/').pop()
     const tempFileName = `imsg_temp_${Date.now()}_${fileName}`
+    const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: copy to Pictures directory
@@ -239,6 +258,7 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
     set theFile to (POSIX file targetPath) as alias
     set targetBuddy to buddy "${recipient}"
     send theFile to targetBuddy
+    delay ${delay}
     `.trim()
 }
 
@@ -249,6 +269,7 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
     const escapedChatId = escapeAppleScriptString(chatId)
     const fileName = filePath.split('/').pop()
     const tempFileName = `imsg_temp_${Date.now()}_${fileName}`
+    const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: copy to Pictures directory
@@ -260,6 +281,7 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
     set theFile to (POSIX file targetPath) as alias
     set targetChat to chat id "${escapedChatId}"
     send theFile to targetChat
+    delay ${delay}
     `.trim()
 }
 
@@ -268,9 +290,11 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
  */
 function generateDirectSendScript(filePath: string, recipient: string): string {
     const escapedPath = escapeAppleScriptString(filePath)
+    const delay = calculateFileDelay(filePath)
     return `
     set targetBuddy to buddy "${recipient}"
     send POSIX file "${escapedPath}" to targetBuddy
+    delay ${delay}
     `.trim()
 }
 
@@ -280,9 +304,11 @@ function generateDirectSendScript(filePath: string, recipient: string): string {
 function generateDirectSendScriptForChat(filePath: string, chatId: string): string {
     const escapedChatId = escapeAppleScriptString(chatId)
     const escapedPath = escapeAppleScriptString(filePath)
+    const delay = calculateFileDelay(filePath)
     return `
     set targetChat to chat id "${escapedChatId}"
     send POSIX file "${escapedPath}" to targetChat
+    delay ${delay}
     `.trim()
 }
 

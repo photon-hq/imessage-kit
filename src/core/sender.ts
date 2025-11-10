@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import type { Recipient } from '../types/advanced'
 import { asRecipient, isURL as checkIsURL } from '../types/advanced'
 import type { RetryConfig } from '../types/config'
+import type { Message } from '../types/message'
 import {
     checkIMessageStatus,
     checkMessagesApp,
@@ -22,10 +23,14 @@ import { delay, validateChatId, validateMessageContent } from '../utils/common'
 import { convertToCompatibleFormat, downloadImage } from '../utils/download'
 import { Semaphore } from '../utils/semaphore'
 import { IMessageError, SendError } from './errors'
+import { MessagePromise } from './message-promise'
+import type { OutgoingMessageManager } from './outgoing-manager'
 
 /** Send result */
 export interface SendResult {
     readonly sentAt: Date
+    /** The sent message (only available if watcher is running and message was confirmed) */
+    readonly message?: Message
 }
 
 /** Send options */
@@ -66,6 +71,8 @@ export class MessageSender {
     private readonly semaphore: Semaphore | null
     /** AppleScript timeout */
     private readonly scriptTimeout: number
+    /** Outgoing message manager */
+    private outgoingManager: OutgoingMessageManager | null = null
 
     constructor(debug = false, retryConfig?: Required<RetryConfig>, maxConcurrent = 5, scriptTimeout = 30000) {
         this.debug = debug
@@ -73,6 +80,13 @@ export class MessageSender {
         this.retryDelay = retryConfig?.delay ?? 1500
         this.semaphore = maxConcurrent > 0 ? new Semaphore(maxConcurrent) : null
         this.scriptTimeout = scriptTimeout
+    }
+
+    /**
+     * Set outgoing message manager (called by SDK)
+     */
+    setOutgoingManager(manager: OutgoingMessageManager): void {
+        this.outgoingManager = manager
     }
 
     /**
@@ -164,9 +178,56 @@ export class MessageSender {
 
                 const paths = await this.prepareAttachments(attachments)
                 const recipient = asRecipient(target)
+
+                // Create message promise if outgoingManager is available
+                // Use the database guid format: iMessage;-;recipient (for DMs)
+                // This matches what AppleScript expects and what's stored in chat.guid
+                const chatId = `iMessage;-;${recipient}`
+                const sentAt = new Date()
+                let messagePromise: MessagePromise | null = null
+
+                if (this.outgoingManager && paths.length > 0) {
+                    // For attachments, create promise to track delivery
+                    const attachmentName = paths[0]?.split('/').pop()
+                    messagePromise = new MessagePromise({
+                        chatId,
+                        text: text,
+                        attachmentName,
+                        isAttachment: true,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                } else if (this.outgoingManager && hasText) {
+                    // For text messages, create promise to track delivery
+                    messagePromise = new MessagePromise({
+                        chatId,
+                        text: text,
+                        isAttachment: false,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                }
+
+                // Send the message
                 await this.sendToRecipient(recipient, text, hasText, paths)
 
-                return { sentAt: new Date() }
+                // Wait for message to appear in database (if promise was created)
+                let confirmedMessage: Message | undefined
+                if (messagePromise) {
+                    try {
+                        confirmedMessage = await messagePromise.promise
+                        if (this.debug) {
+                            console.log('[Sender] Message confirmed in database')
+                        }
+                    } catch (promiseError) {
+                        if (this.debug) {
+                            console.warn('[Sender] Message promise rejected:', promiseError)
+                        }
+                        // Don't throw - message was sent, just not confirmed
+                    }
+                }
+
+                return { sentAt, message: confirmedMessage }
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error)
                 const context = `[To: ${target}] [Text: ${hasText ? 'yes' : 'no'}] [Attachments: ${attachments.length}]`
@@ -264,6 +325,10 @@ export class MessageSender {
             for (let i = 1; i < resolvedPaths.length; i++) {
                 const { script: attachScript } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
                 await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
+                // Extra delay between attachments
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         } else if (hasText) {
             // Strategy 2: Text only
@@ -275,6 +340,10 @@ export class MessageSender {
                 const { script } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
                 const description = `Send attachment ${i + 1}/${resolvedPaths.length} to ${recipient}`
                 await this.executeWithRetry(script, description)
+                // Extra delay between attachments to ensure previous one is sent
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         }
     }
@@ -298,6 +367,10 @@ export class MessageSender {
             for (let i = 1; i < resolvedPaths.length; i++) {
                 const { script: attachScript } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
                 await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
+                // Extra delay between attachments
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         } else if (hasText) {
             // Strategy 2: Text only
@@ -309,6 +382,10 @@ export class MessageSender {
                 const { script } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
                 const description = `Send attachment ${i + 1}/${resolvedPaths.length} to group ${groupId}`
                 await this.executeWithRetry(script, description)
+                // Extra delay between attachments to ensure previous one is sent
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         }
     }
@@ -345,9 +422,53 @@ export class MessageSender {
                 await this.checkMessagesEnvironment()
 
                 const paths = await this.prepareAttachments(attachments)
+
+                // Create message promise if outgoingManager is available
+                const sentAt = new Date()
+                let messagePromise: MessagePromise | null = null
+
+                if (this.outgoingManager && paths.length > 0) {
+                    // For attachments, create promise to track delivery
+                    const attachmentName = paths[0]?.split('/').pop()
+                    messagePromise = new MessagePromise({
+                        chatId: groupId,
+                        text: text,
+                        attachmentName,
+                        isAttachment: true,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                } else if (this.outgoingManager && hasText) {
+                    // For text messages, create promise to track delivery
+                    messagePromise = new MessagePromise({
+                        chatId: groupId,
+                        text: text,
+                        isAttachment: false,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                }
+
+                // Send the message
                 await this.sendToGroupChat(groupId, text, hasText, paths)
 
-                return { sentAt: new Date() }
+                // Wait for message to appear in database (if promise was created)
+                let confirmedMessage: Message | undefined
+                if (messagePromise) {
+                    try {
+                        confirmedMessage = await messagePromise.promise
+                        if (this.debug) {
+                            console.log('[Sender] Group message confirmed in database')
+                        }
+                    } catch (promiseError) {
+                        if (this.debug) {
+                            console.warn('[Sender] Group message promise rejected:', promiseError)
+                        }
+                        // Don't throw - message was sent, just not confirmed
+                    }
+                }
+
+                return { sentAt, message: confirmedMessage }
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : String(error)
                 const context = `[Group: ${groupId}] [Text: ${hasText ? 'yes' : 'no'}] [Attachments: ${attachments.length}]`

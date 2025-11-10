@@ -31,15 +31,16 @@ import type {
     Message,
     MessageFilter,
     MessageQueryResult,
-    SendResult,
     UnreadMessagesResult,
 } from '../types/message'
 import { extractRecipientFromChatId, isGroupChatId, validateChatId } from '../utils/common'
 import { getDefaultDatabasePath, requireMacOS } from '../utils/platform'
 import { TempFileManager } from '../utils/temp-file-manager'
 import { MessageChain } from './chain'
+import { ERROR_SDK_DESTROYED, ERROR_WATCHER_RUNNING } from './constants'
 import { IMessageDatabase } from './database'
-import { MessageSender } from './sender'
+import { OutgoingMessageManager } from './outgoing-manager'
+import { MessageSender, type SendResult } from './sender'
 import { MessageWatcher, type WatcherEvents } from './watcher'
 
 /** SDK dependency injection interface */
@@ -69,6 +70,9 @@ export class IMessageSDK {
     /** Message watcher */
     private watcher: MessageWatcher | null = null
 
+    /** Outgoing message manager */
+    private readonly outgoingManager: OutgoingMessageManager
+
     /** Whether destroyed */
     private destroyed = false
 
@@ -94,6 +98,13 @@ export class IMessageSDK {
             )
 
         this.pluginManager = dependencies?.pluginManager ?? new PluginManager()
+
+        this.outgoingManager = new OutgoingMessageManager(this.config.debug)
+
+        // Connect sender with outgoingManager (if sender supports it)
+        if ('setOutgoingManager' in this.sender && typeof this.sender.setOutgoingManager === 'function') {
+            this.sender.setOutgoingManager(this.outgoingManager)
+        }
 
         if (config.plugins) {
             for (const plugin of config.plugins) {
@@ -186,7 +197,7 @@ export class IMessageSDK {
      * Register plugin
      */
     use(plugin: Plugin): this {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         this.pluginManager.use(plugin)
         return this
     }
@@ -203,7 +214,7 @@ export class IMessageSDK {
      * Query messages
      */
     async getMessages(filter?: MessageFilter): Promise<MessageQueryResult> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
         await this.ensurePluginsReady()
         await this.pluginManager.callHookForAll('onBeforeQuery', filter)
@@ -227,7 +238,10 @@ export class IMessageSDK {
      * ```
      */
     async getUnreadMessages(): Promise<UnreadMessagesResult> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
+
+        await this.ensurePluginsReady()
+        await this.pluginManager.callHookForAll('onBeforeQuery', { unreadOnly: true })
 
         const { grouped, total } = await this.database.getUnreadMessages()
         const groups = Array.from(grouped.entries()).map(([sender, messages]) => ({
@@ -235,11 +249,17 @@ export class IMessageSDK {
             messages,
         }))
 
-        return {
+        const result = {
             groups,
             total,
             senderCount: groups.length,
         }
+
+        // Flatten all messages for plugin hook
+        const allMessages = groups.flatMap((g) => g.messages)
+        await this.pluginManager.callHookForAll('onAfterQuery', allMessages)
+
+        return result
     }
 
     /**
@@ -269,7 +289,7 @@ export class IMessageSDK {
         to: string | Recipient,
         content: string | { text?: string; images?: string[]; files?: string[] }
     ): Promise<SendResult> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
         /** Normalize to object format */
         const normalized =
@@ -356,7 +376,7 @@ export class IMessageSDK {
      * ```
      */
     async listChats(options?: ListChatsOptions | number): Promise<ChatSummary[]> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         await this.ensurePluginsReady()
 
         // Backward compatibility: convert number to options object
@@ -364,6 +384,8 @@ export class IMessageSDK {
 
         await this.pluginManager.callHookForAll('onBeforeQuery', opts)
         const result = await this.database.listChats(opts)
+        // Note: onAfterQuery expects Message[], but listChats returns ChatSummary[]
+        // We pass empty array to maintain hook signature compatibility
         await this.pluginManager.callHookForAll('onAfterQuery', [])
         return result
     }
@@ -403,7 +425,7 @@ export class IMessageSDK {
             error?: Error
         }>
     > {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
         const results = await Promise.allSettled(
             messages.map(async ({ to, content }) => ({
@@ -472,7 +494,7 @@ export class IMessageSDK {
      * Create message processing chain
      */
     message(message: Message) {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         return new MessageChain(message, this.sender)
     }
 
@@ -480,8 +502,8 @@ export class IMessageSDK {
      * Start watching for new messages
      */
     async startWatching(events?: WatcherEvents): Promise<void> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
-        if (this.watcher) throw new Error('Watcher is already running')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
+        if (this.watcher) throw new Error(ERROR_WATCHER_RUNNING)
 
         const watcher = new MessageWatcher(
             this.database,
@@ -491,7 +513,8 @@ export class IMessageSDK {
             this.config.webhook,
             events,
             this.pluginManager,
-            this.config.debug
+            this.config.debug,
+            this.outgoingManager
         )
 
         try {
@@ -531,7 +554,17 @@ export class IMessageSDK {
         }
         this.watcher = null
 
-        /** 2. Destroy plugins */
+        /** 2. Reject all pending message promises */
+        try {
+            this.outgoingManager.rejectAll('SDK closed')
+        } catch (error) {
+            errors.push({
+                component: 'outgoingManager',
+                error: error instanceof Error ? error : new Error(String(error)),
+            })
+        }
+
+        /** 3. Destroy plugins */
         try {
             await this.pluginManager.destroy()
         } catch (error) {
@@ -541,7 +574,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 3. Destroy temporary file manager (clean up all temp files) */
+        /** 4. Destroy temporary file manager (clean up all temp files) */
         try {
             await this.tempFileManager.destroy()
         } catch (error) {
@@ -551,7 +584,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 4. Close database */
+        /** 5. Close database */
         try {
             this.database.close()
         } catch (error) {

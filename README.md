@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/@photon-ai/imessage-kit.svg)](https://www.npmjs.com/package/@photon-ai/imessage-kit)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/RSJUUHTV)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/bZd4CMd2H5)
 
 It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
 Built for developers who want to integrate messaging into their **AI agents, automation scripts**, or **chat-first apps**, without AppleScript headaches.
@@ -139,6 +139,14 @@ console.log(`Total: ${unread.total}, Senders: ${unread.senderCount}`)
 ```typescript
 // Unified send API - automatically detects recipient or chatId
 await sdk.send(target, content)
+
+// Get sent message immediately (requires watcher)
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello!')
+if (result.message) {
+    console.log('Sent message:', result.message.text)
+    console.log('Message ID:', result.message.id)
+}
 
 // Send to phone number
 await sdk.send('+1234567890', 'Hello World!')
@@ -391,7 +399,8 @@ import { loggerPlugin } from '@photon-ai/imessage-kit'
 // Use built-in logger plugin
 sdk.use(loggerPlugin({
     level: 'info',
-    prefix: '[iMessage]'
+    colored: true,
+    timestamp: false
 }))
 
 // Create custom plugin
@@ -415,67 +424,41 @@ const customPlugin = {
 sdk.use(customPlugin)
 ```
 
-### Group Chat ChatId: How to Find and Use
+### Finding Group Chat IDs
 
-Find the `chatId` for a group chat first, then use it to send messages reliably.
-
-1) Find Group ChatId (no database permission required)
-
-- Use the AppleScript helper example to list chats and GUIDs:
-
-```bash
-# List all chats (filters groups only)
-GROUPS_ONLY=true bun run examples/list-chats-applescript.ts
-
-# Filter by name keyword (case-insensitive)
-GROUPS_ONLY=true Q="project" bun run examples/list-chats-applescript.ts
-```
-
-This produces lines like:
-
-```
-chatId=iMessage;+;chat61321855167474084 | name=Project Team | type=GROUP
-```
-
-2) Find Group ChatId (requires Full Disk Access)
-
-- If you prefer a database-backed list with `lastMessageAt` and `displayName`, call `listChats()` or use the example:
-
-```bash
-bun run examples/list-chats.ts
-```
-
-Note: Database access requires granting Full Disk Access under System Settings → Privacy & Security → Full Disk Access for your terminal/IDE.
-
-3) Use the ChatId to send to the group
-
-- Programmatic usage:
+To send messages to a group chat, you need its `chatId`. Use `listChats()` to find it:
 
 ```typescript
-// Use the unified send() method - it automatically detects chatId
+// List all chats
+const chats = await sdk.listChats()
+
+// Filter for group chats only
+const groups = await sdk.listChats({ type: 'group' })
+
+// Search by name
+const projectChats = await sdk.listChats({ search: 'Project', type: 'group' })
+
+// Each chat has a chatId you can use for sending
+for (const chat of groups) {
+    console.log(`${chat.displayName}: ${chat.chatId}`)
+}
+```
+
+Then use the `chatId` to send messages:
+
+```typescript
+// Send to group using chatId from listChats()
 await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFiles('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
+await sdk.send('chat45e2b868ce1e43da89af262922733382', {
+    text: 'Check these files',
+    files: ['/file1.pdf', '/file2.csv']
+})
 ```
 
-- CLI example using the helper script:
-
-```bash
-# Send a text message
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Hello from iMessage Kit" bun run examples/send-to-group.ts
-
-# Send images/files
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Please check" IMAGES="/path/a.jpg,/path/b.png" bun run examples/send-to-group.ts
-CHAT_ID="iMessage;+;chat61321855167474084" FILES="/path/report.pdf" bun run examples/send-to-group.ts
-```
-
-ChatId formats:
-
-- Group: GUID-like string (often appears as `iMessage;+;chat...` when coming from AppleScript; validated as a group chatId without requiring a semicolon delimiter).
-- DM: `<service>;<address>` (e.g., `iMessage;+1234567890`, `SMS;+1234567890`, `iMessage;user@example.com`).
-
-Validation: passing an invalid `chatId` (unsupported service prefix or malformed GUID) to `send()` throws early with a clear error.
-
-Plugins: `onBeforeSend` / `onAfterSend` receive the unified target (chatId). If you previously treated `to` as phone/email, update plugins to handle chatIds.
+**ChatId Formats:**
+- **Group chats**: GUID format (e.g., `chat45e2b868ce1e43da89af262922733382`)
+- **Direct messages**: `service;address` format (e.g., `iMessage;+1234567890`)
+- The SDK also accepts AppleScript format `iMessage;+;chat...` for groups (auto-normalized)
 
 ## Advanced Usage
 
@@ -509,11 +492,19 @@ try {
 
 Check the `examples/` directory for complete examples:
 
-- **[send-hello-world.ts](./examples/send-hello-world.ts)** - Basic message sending
-- **[send-network-image.ts](./examples/send-network-image.ts)** - Send images from URLs
-- **[send-files.ts](./examples/send-files.ts)** - Send files (PDF, CSV, VCF contact cards)
-- **[auto-reply.ts](./examples/auto-reply.ts)** - Auto-reply bot with chain API
-- **[advanced.ts](./examples/advanced.ts)** - Advanced features showcase
+- **[01-send-text.ts](./examples/01-send-text.ts)** - Basic text message
+- **[02-send-image.ts](./examples/02-send-image.ts)** - Send images
+- **[03-send-file.ts](./examples/03-send-file.ts)** - Send files
+- **[04-send-group.ts](./examples/04-send-group.ts)** - Send to group chat
+- **[05-query-messages.ts](./examples/05-query-messages.ts)** - Query messages
+- **[06-list-chats.ts](./examples/06-list-chats.ts)** - List all chats
+- **[07-watch-messages.ts](./examples/07-watch-messages.ts)** - Watch for new messages
+- **[08-auto-reply.ts](./examples/08-auto-reply.ts)** - Auto-reply bot
+- **[09-batch-send.ts](./examples/09-batch-send.ts)** - Batch sending
+- **[10-get-sent-message.ts](./examples/10-get-sent-message.ts)** - Get sent message immediately
+- **[11-plugin.ts](./examples/11-plugin.ts)** - Custom plugin
+- **[12-error-handling.ts](./examples/12-error-handling.ts)** - Error handling
+- **[13-watch-own-messages.ts](./examples/13-watch-own-messages.ts)** - Watch own messages
 
 ## Development
 
@@ -595,7 +586,7 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 - `getMessages(filter?)` - Query messages with optional filters
 - `getUnreadMessages()` - Get unread messages with statistics (total, senderCount, groups)
 - `listChats(options?)` - List chats with filtering/sorting (type, hasUnread, sortBy, search, limit)
-- `send(to, content)` - Send text, images, and/or files (auto-detects recipient or chatId)
+- `send(to, content)` - Send text, images, and/or files (returns SendResult with optional message)
 - `sendFile(to, filePath, text?)` - Send a single file (supports recipient or chatId)
 - `sendFiles(to, filePaths, text?)` - Send multiple files (supports recipient or chatId)
 - `sendBatch(messages)` - Send multiple messages concurrently
@@ -605,6 +596,22 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 - `use(plugin)` - Register plugin
 - `close()` - Close SDK and release resources
 
+### SendResult
+
+```typescript
+interface SendResult {
+    sentAt: Date                // When message was sent
+    message?: Message           // The sent message (only if watcher is running)
+}
+```
+
+**Note**: To get the `message` field populated, you must start the watcher before sending:
+```typescript
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello')
+// result.message will be available within ~2 seconds
+```
+
 ### Message Object
 
 Each message object includes:
@@ -612,14 +619,16 @@ Each message object includes:
 ```typescript
 interface Message {
     id: string              // Message ID
+    guid: string            // Globally unique identifier
     text: string | null     // Message text content
     sender: string          // Sender (phone/email)
+    senderName: string | null  // Sender display name
     chatId: string          // Chat identifier
     isGroupChat: boolean    // Whether this is a group chat message
     isFromMe: boolean       // Whether sent by current user
     isRead: boolean         // Read status
     service: ServiceType    // 'iMessage' | 'SMS' | 'RCS'
-    attachments: Attachment[]  // File attachments
+    attachments: readonly Attachment[]  // File attachments
     date: Date              // Message timestamp
 }
 ```
