@@ -81,3 +81,16 @@ export type {
 } from './types/message'
 
 export { asRecipient, isMacOS, requireMacOS } from './utils/platform'
+
+// Attachment helpers
+export {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentExtension,
+    getAttachmentMetadata,
+    getAttachmentSize,
+    isAudioAttachment,
+    isImageAttachment,
+    isVideoAttachment,
+    readAttachment,
+} from './helpers/attachment'

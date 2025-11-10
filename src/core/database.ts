@@ -124,7 +124,17 @@ export class IMessageDatabase {
      */
     async getMessages(filter: MessageFilter = {}): Promise<MessageQueryResult> {
         await this.ensureInit()
-        const { unreadOnly, excludeOwnMessages = true, sender, chatId, service, hasAttachments, since, limit } = filter
+        const {
+            unreadOnly,
+            excludeOwnMessages = true,
+            sender,
+            chatId,
+            service,
+            hasAttachments,
+            since,
+            search,
+            limit,
+        } = filter
 
         let query = `
         SELECT 
@@ -188,6 +198,11 @@ export class IMessageDatabase {
             const macTimestampNs = (since.getTime() - this.MAC_EPOCH) * 1000000
             query += ' AND message.date >= ?'
             params.push(macTimestampNs)
+        }
+
+        if (search) {
+            query += ' AND message.text LIKE ?'
+            params.push(`%${search}%`)
         }
 
         query += ' ORDER BY message.date DESC'

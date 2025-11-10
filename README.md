@@ -120,6 +120,12 @@ const filtered = await sdk.getMessages({
     since: new Date('2025-10-20')
 })
 
+// Search messages by text content
+const searchResults = await sdk.getMessages({
+    search: 'meeting',
+    limit: 50
+})
+
 // Include your own messages
 const all = await sdk.getMessages({ excludeOwnMessages: false })
 
@@ -331,6 +337,49 @@ const sdk = new IMessageSDK({
 await sdk.startWatching()
 // Webhook receives: { event, message, timestamp }
 ```
+
+### Working with Attachments
+
+The SDK provides helper functions for working with attachments:
+
+```typescript
+import {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentSize,
+    isImageAttachment,
+    isVideoAttachment
+} from '@photon-ai/imessage-kit'
+
+const message = await sdk.getMessages({ hasAttachments: true, limit: 1 })
+const attachment = message.messages[0].attachments[0]
+
+// Check if file exists
+if (await attachmentExists(attachment)) {
+    // Get file size
+    const size = await getAttachmentSize(attachment)
+    console.log(`File size: ${(size / 1024 / 1024).toFixed(2)} MB`)
+    
+    // Check file type
+    if (isImageAttachment(attachment)) {
+        // Download image
+        await downloadAttachment(attachment, '/path/to/save/image.jpg')
+    } else if (isVideoAttachment(attachment)) {
+        console.log('Video file')
+    }
+}
+```
+
+**Available helpers:**
+- `attachmentExists(attachment)` - Check if file exists
+- `downloadAttachment(attachment, destPath)` - Copy file to destination
+- `getAttachmentSize(attachment)` - Get file size in bytes
+- `getAttachmentMetadata(attachment)` - Get file stats
+- `readAttachment(attachment)` - Read file as Buffer
+- `getAttachmentExtension(attachment)` - Get file extension
+- `isImageAttachment(attachment)` - Check if image
+- `isVideoAttachment(attachment)` - Check if video
+- `isAudioAttachment(attachment)` - Check if audio
 
 ## Plugin System
 

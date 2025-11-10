@@ -147,6 +147,11 @@ export interface MessageFilter {
     /** Only query messages after this time */
     readonly since?: Date
 
+    // ===== Search filter =====
+
+    /** Search message text content (case-insensitive) */
+    readonly search?: string
+
     // ===== Limit control =====
 
     /** Limit number of results */
