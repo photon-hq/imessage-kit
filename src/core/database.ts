@@ -214,18 +214,19 @@ export class IMessageDatabase {
     /**
      * Get unread messages grouped by sender
      *
-     * @returns Map where key is sender identifier and value is array of messages from that sender
+     * @returns Object with grouped messages and total count
      *
      * @example
      * ```ts
-     * const grouped = await db.getUnreadMessages()
+     * const { grouped, total } = await db.getUnreadMessages()
      * for (const [sender, messages] of grouped) {
      *   console.log(`${sender}: ${messages.length} unread messages`)
      * }
+     * console.log(`Total: ${total}`)
      * ```
      */
-    async getUnreadMessages(): Promise<Map<string, Message[]>> {
-        const { messages } = await this.getMessages({ unreadOnly: true })
+    async getUnreadMessages(): Promise<{ grouped: Map<string, Message[]>; total: number }> {
+        const { messages, total } = await this.getMessages({ unreadOnly: true })
         const grouped = new Map<string, Message[]>()
 
         for (const msg of messages) {
@@ -237,7 +238,7 @@ export class IMessageDatabase {
             }
         }
 
-        return grouped
+        return { grouped, total }
     }
 
     /**

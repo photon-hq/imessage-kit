@@ -174,6 +174,25 @@ export interface MessageQueryResult {
 // ==================== Send result ====================
 
 /**
+ * Unread messages result
+ *
+ * Contains unread messages grouped by sender with statistics
+ */
+export interface UnreadMessagesResult {
+    /** Messages grouped by sender */
+    readonly groups: ReadonlyArray<{
+        readonly sender: string
+        readonly messages: readonly Message[]
+    }>
+
+    /** Total number of unread messages */
+    readonly total: number
+
+    /** Number of unique senders */
+    readonly senderCount: number
+}
+
+/**
  * Send result
  *
  * Represents successful message sending result

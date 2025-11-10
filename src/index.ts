@@ -12,7 +12,8 @@
  *
  * // Get unread messages
  * const unread = await sdk.getUnreadMessages()
- * for (const { sender, messages } of unread) {
+ * console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+ * for (const { sender, messages } of unread.groups) {
  *   console.log(`${sender}: ${messages.length} messages`)
  * }
  *
@@ -75,6 +76,7 @@ export type {
     MessageQueryResult,
     SendResult,
     ServiceType,
+    UnreadMessagesResult,
 } from './types/message'
 
 export { asRecipient, isMacOS, requireMacOS } from './utils/platform'

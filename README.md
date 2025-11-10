@@ -88,8 +88,9 @@ const sdk = new IMessageSDK({
 })
 
 // Get unread messages
-const unreadMessages = await sdk.getUnreadMessages()
-for (const { sender, messages } of unreadMessages) {
+const unread = await sdk.getUnreadMessages()
+console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+for (const { sender, messages } of unread.groups) {
     console.log(`${sender}: ${messages.length} unread messages`)
 }
 
@@ -124,6 +125,7 @@ const all = await sdk.getMessages({ excludeOwnMessages: false })
 
 // Get unread messages grouped by sender
 const unread = await sdk.getUnreadMessages()
+console.log(`Total: ${unread.total}, Senders: ${unread.senderCount}`)
 ```
 
 ### Sending Messages
@@ -517,7 +519,7 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 ### Main Methods
 
 - `getMessages(filter?)` - Query messages with optional filters
-- `getUnreadMessages()` - Get unread messages grouped by sender
+- `getUnreadMessages()` - Get unread messages with statistics (total, senderCount, groups)
 - `listChats(limit?)` - List chats with `{ chatId, displayName, lastMessageAt, isGroup }`
 - `send(to, content)` - Send text, images, and/or files (auto-detects recipient or chatId)
 - `sendFile(to, filePath, text?)` - Send a single file (supports recipient or chatId)
@@ -545,6 +547,25 @@ interface Message {
     service: ServiceType    // 'iMessage' | 'SMS' | 'RCS'
     attachments: Attachment[]  // File attachments
     date: Date              // Message timestamp
+}
+```
+
+### Query Results
+
+```typescript
+interface MessageQueryResult {
+    messages: readonly Message[]  // Message list
+    total: number                  // Total count
+    unreadCount: number            // Unread count
+}
+
+interface UnreadMessagesResult {
+    groups: Array<{                // Messages grouped by sender
+        sender: string
+        messages: readonly Message[]
+    }>
+    total: number                  // Total unread messages
+    senderCount: number            // Number of unique senders
 }
 ```
 

@@ -25,7 +25,14 @@
 import { type Plugin, PluginManager } from '../plugins/core'
 import { type Recipient, asRecipient } from '../types/advanced'
 import type { IMessageConfig, ResolvedConfig } from '../types/config'
-import type { ChatSummary, Message, MessageFilter, MessageQueryResult, SendResult } from '../types/message'
+import type {
+    ChatSummary,
+    Message,
+    MessageFilter,
+    MessageQueryResult,
+    SendResult,
+    UnreadMessagesResult,
+} from '../types/message'
 import { extractRecipientFromChatId, isGroupChatId, validateChatId } from '../utils/common'
 import { getDefaultDatabasePath, requireMacOS } from '../utils/platform'
 import { TempFileManager } from '../utils/temp-file-manager'
@@ -207,15 +214,31 @@ export class IMessageSDK {
 
     /**
      * Get unread messages (grouped by sender)
+     *
+     * @returns Unread messages with statistics
+     * @example
+     * ```ts
+     * const unread = await sdk.getUnreadMessages()
+     * console.log(`${unread.total} unread messages from ${unread.senderCount} senders`)
+     * for (const { sender, messages } of unread.groups) {
+     *   console.log(`${sender}: ${messages.length} messages`)
+     * }
+     * ```
      */
-    async getUnreadMessages(): Promise<Array<{ sender: string; messages: Message[] }>> {
+    async getUnreadMessages(): Promise<UnreadMessagesResult> {
         if (this.destroyed) throw new Error('SDK is destroyed')
 
-        const map = await this.database.getUnreadMessages()
-        return Array.from(map.entries()).map(([sender, messages]) => ({
+        const { grouped, total } = await this.database.getUnreadMessages()
+        const groups = Array.from(grouped.entries()).map(([sender, messages]) => ({
             sender,
             messages,
         }))
+
+        return {
+            groups,
+            total,
+            senderCount: groups.length,
+        }
     }
 
     /**

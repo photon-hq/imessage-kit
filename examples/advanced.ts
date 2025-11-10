@@ -162,7 +162,7 @@ async function exampleAutoCleanup() {
         await using localSdk = new IMessageSDK()
 
         const unread = await localSdk.getUnreadMessages()
-        console.log(`Unread messages: ${unread.length} sender(s)`)
+        console.log(`Unread messages: ${unread.total} from ${unread.senderCount} sender(s)`)
     }
 
     console.log('SDK automatically cleaned up (resources released)')
@@ -188,8 +188,8 @@ async function exampleMessageFiltering() {
 
     // Get unread messages grouped by sender
     const groupedUnread = await sdk.getUnreadMessages()
-    console.log(`Unread messages from ${groupedUnread.length} sender(s):`)
-    for (const { sender, messages } of groupedUnread) {
+    console.log(`${groupedUnread.total} unread messages from ${groupedUnread.senderCount} sender(s):`)
+    for (const { sender, messages } of groupedUnread.groups) {
         console.log(`  - ${sender}: ${messages.length} message(s)`)
     }
 }

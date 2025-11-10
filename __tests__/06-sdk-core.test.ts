@@ -238,11 +238,13 @@ describe('IMessageSDK', () => {
                 }
             )
 
-            const grouped = await sdk.getUnreadMessages()
+            const result = await sdk.getUnreadMessages()
 
-            expect(grouped.length).toBe(2)
-            expect(grouped.find((g) => g.sender === '+1111111111')?.messages.length).toBe(2)
-            expect(grouped.find((g) => g.sender === '+2222222222')?.messages.length).toBe(1)
+            expect(result.groups.length).toBe(2)
+            expect(result.total).toBe(3)
+            expect(result.senderCount).toBe(2)
+            expect(result.groups.find((g) => g.sender === '+1111111111')?.messages.length).toBe(2)
+            expect(result.groups.find((g) => g.sender === '+2222222222')?.messages.length).toBe(1)
         })
     })
 
