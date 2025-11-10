@@ -66,7 +66,8 @@ export const asRecipient = (value: string): Recipient => {
     }
 
     // Check phone number format and minimum digits
-    if (PHONE_REGEX.test(normalized) && hasMinDigits(normalized, 3)) {
+    // Most phone numbers have 7-10 digits (excluding country code)
+    if (PHONE_REGEX.test(normalized) && hasMinDigits(normalized, 7)) {
         return normalized
     }
 

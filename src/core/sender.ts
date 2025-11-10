@@ -180,8 +180,10 @@ export class MessageSender {
                 const recipient = asRecipient(target)
 
                 // Create message promise if outgoingManager is available
-                // Use the database guid format: iMessage;-;recipient (for DMs)
-                // This matches what AppleScript expects and what's stored in chat.guid
+                // Use full chat GUID format: iMessage;-;recipient (for DMs)
+                // Note: Database may store just the recipient (e.g., "pilot@photon.codes")
+                // but MessagePromise.normalizeChatId() handles both formats by extracting
+                // the core identifier (last part after semicolons), ensuring proper matching
                 const chatId = `iMessage;-;${recipient}`
                 const sentAt = new Date()
                 let messagePromise: MessagePromise | null = null

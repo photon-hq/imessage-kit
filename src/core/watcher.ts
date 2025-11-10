@@ -48,10 +48,13 @@ export class MessageWatcher {
         private events: WatcherEvents = {},
         private pluginManager?: PluginManager,
         private debug = false,
-        private outgoingManager?: OutgoingMessageManager
+        private outgoingManager?: OutgoingMessageManager,
+        initialLookbackMs = 10000
     ) {
-        // Start from 10 seconds ago to catch recently sent messages
-        this.lastCheckTime = new Date(Date.now() - 10000)
+        // Start from initialLookbackMs ago to catch recently sent messages
+        // Default 10 seconds helps catch messages sent just before watcher starts
+        // Note: This may cause duplicate processing if watcher is frequently restarted
+        this.lastCheckTime = new Date(Date.now() - initialLookbackMs)
     }
 
     /**

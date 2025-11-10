@@ -27,6 +27,7 @@ export interface MessagePromiseOptions {
     attachmentName?: string
     isAttachment: boolean
     sentAt: Date | number
+    debug?: boolean
 }
 
 /**
@@ -43,6 +44,7 @@ export class MessagePromise {
     readonly attachmentName: string | null
     readonly isAttachment: boolean
     readonly sentAt: number
+    private readonly debug: boolean
 
     isResolved = false
     errored = false
@@ -51,6 +53,7 @@ export class MessagePromise {
     private timeoutHandle: NodeJS.Timeout
 
     constructor(options: MessagePromiseOptions) {
+        this.debug = options.debug ?? false
         this.chatId = options.chatId
         this.text = this.normalizeText(options.text ?? '')
         this.attachmentName = options.attachmentName ?? null
@@ -67,7 +70,11 @@ export class MessagePromise {
             this.error = err
         })
 
-        // Timeout: 30 seconds for attachments, 10 seconds for text
+        // Timeout configuration:
+        // - Attachments: 30 seconds (longer due to file upload time, especially for large files)
+        // - Text messages: 10 seconds (typically faster, only text data to send)
+        // These values account for AppleScript execution, Messages app processing,
+        // and database write delays. Adjust if experiencing frequent timeouts.
         const timeout = this.isAttachment ? 30 * 1000 : 10 * 1000
         this.timeoutHandle = setTimeout(() => {
             if (!this.isResolved) {
@@ -120,18 +127,16 @@ export class MessagePromise {
      * Check if this promise matches the given message
      */
     matches(message: Message): boolean {
-        const debug = false
-
         // Check if message is too old (sent before this promise was created)
         const timeDiff = message.date.getTime() - this.sentAt
         if (timeDiff < -5000) {
-            if (debug) console.log('[MessagePromise] Time check failed:', { timeDiff, tooOld: true })
+            if (this.debug) console.log('[MessagePromise] Time check failed:', { timeDiff, tooOld: true })
             return false
         }
 
         // Check chat ID
         if (!this.matchesChatId(message.chatId)) {
-            if (debug)
+            if (this.debug)
                 console.log('[MessagePromise] ChatId mismatch:', {
                     expected: this.chatId,
                     actual: message.chatId,
@@ -142,7 +147,7 @@ export class MessagePromise {
         // Check attachment
         if (this.isAttachment) {
             if (!message.attachments || message.attachments.length === 0) {
-                if (debug) console.log('[MessagePromise] No attachments in message')
+                if (this.debug) console.log('[MessagePromise] No attachments in message')
                 return false
             }
 
@@ -153,7 +158,7 @@ export class MessagePromise {
                     const attName = this.getFilenameWithoutExtension(att.filename).toLowerCase()
                     return attName === normalizedName
                 })
-                if (debug)
+                if (this.debug)
                     console.log('[MessagePromise] Attachment match:', {
                         expected: normalizedName,
                         actual: message.attachments.map((a) =>
@@ -171,7 +176,7 @@ export class MessagePromise {
         const messageText = this.normalizeText(message.text ?? '')
         const matches = this.text === messageText
 
-        if (debug) {
+        if (this.debug) {
             console.log('[MessagePromise] Text match:', {
                 expected: this.text,
                 actual: messageText,
@@ -200,15 +205,21 @@ export class MessagePromise {
     /**
      * Normalize chat ID for comparison
      *
-     * Database stores:
+     * Handles format differences between what we construct and what's in the database:
+     *
+     * Database stores (from message.chatId):
      * - DM: "pilot@photon.codes" (no prefix)
      * - Group: "chat493787071395575843" (no prefix)
      *
-     * We construct:
+     * We construct (in sender.ts):
      * - DM: "iMessage;-;pilot@photon.codes"
      * - Group: "iMessage;+;chat493787071395575843" or just the GUID
      *
-     * So we need to extract the core identifier (last part after semicolons)
+     * This method extracts the core identifier (last part after semicolons) to ensure
+     * both formats match correctly. For example:
+     * - "iMessage;-;pilot@photon.codes" → "pilot@photon.codes"
+     * - "pilot@photon.codes" → "pilot@photon.codes"
+     * Both normalize to the same value, enabling successful matching.
      */
     private normalizeChatId(chatId: string): string {
         // Extract the core identifier (everything after last semicolon, or the whole string)

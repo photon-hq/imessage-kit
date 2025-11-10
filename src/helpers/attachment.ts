@@ -11,12 +11,15 @@ import type { Attachment } from '../types/message'
 
 /** Supported image file extensions */
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'tiff', 'svg'] as const
+type ImageExtension = (typeof IMAGE_EXTENSIONS)[number]
 
 /** Supported video file extensions */
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv', 'webm'] as const
+type VideoExtension = (typeof VIDEO_EXTENSIONS)[number]
 
 /** Supported audio file extensions */
 const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'wma'] as const
+type AudioExtension = (typeof AUDIO_EXTENSIONS)[number]
 
 /**
  * Check if attachment file exists on disk
@@ -173,7 +176,7 @@ export function getAttachmentExtension(attachment: Attachment): string {
  */
 export function isImageAttachment(attachment: Attachment): boolean {
     const ext = getAttachmentExtension(attachment)
-    return IMAGE_EXTENSIONS.includes(ext as any)
+    return IMAGE_EXTENSIONS.includes(ext as ImageExtension)
 }
 
 /**
@@ -184,7 +187,7 @@ export function isImageAttachment(attachment: Attachment): boolean {
  */
 export function isVideoAttachment(attachment: Attachment): boolean {
     const ext = getAttachmentExtension(attachment)
-    return VIDEO_EXTENSIONS.includes(ext as any)
+    return VIDEO_EXTENSIONS.includes(ext as VideoExtension)
 }
 
 /**
@@ -195,5 +198,5 @@ export function isVideoAttachment(attachment: Attachment): boolean {
  */
 export function isAudioAttachment(attachment: Attachment): boolean {
     const ext = getAttachmentExtension(attachment)
-    return AUDIO_EXTENSIONS.includes(ext as any)
+    return AUDIO_EXTENSIONS.includes(ext as AudioExtension)
 }

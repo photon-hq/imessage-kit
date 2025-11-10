@@ -242,6 +242,19 @@ for (const c of chats) {
 - The SDK also accepts AppleScript format `iMessage;+;chat...` for groups (auto-normalized)
 - Service-prefixed DMs like `iMessage;+1234567890` are supported (from database)
 
+**ChatId Format Matching:**
+
+The SDK intelligently handles different chatId formats to ensure reliable message tracking:
+
+- **When sending**: The SDK constructs chatIds in the format `iMessage;-;recipient` for DMs
+- **In database**: Messages may be stored with just the recipient (e.g., `pilot@photon.codes`)
+- **Automatic normalization**: The SDK extracts the core identifier (the part after the last semicolon) to match both formats
+  - `iMessage;-;pilot@photon.codes` → normalizes to `pilot@photon.codes`
+  - `pilot@photon.codes` → normalizes to `pilot@photon.codes`
+  - Both match successfully ✓
+
+This ensures that sent messages are correctly tracked and resolved, even when database and constructed formats differ.
+
 ### Message Chain Processing
 
 The SDK provides a fluent API for elegant message processing:
@@ -470,9 +483,27 @@ const sdk = new IMessageSDK({
     maxConcurrent: 10,               // Max concurrent sends
     scriptTimeout: 30000,            // AppleScript timeout (ms)
     databasePath: '/custom/path',    // Custom database path
-    plugins: [loggerPlugin()]        // Plugins
+    plugins: [loggerPlugin()],       // Plugins
+    
+    // Watcher configuration
+    watcher: {
+        pollInterval: 2000,          // Polling interval in ms (default: 2000)
+        unreadOnly: false,           // Only watch unread messages (default: false)
+        excludeOwnMessages: true,    // Exclude your own messages (default: true)
+        initialLookbackMs: 10000     // Initial lookback time in ms (default: 10000)
+                                     // Set to 0 to only process new messages
+                                     // Note: May cause duplicate processing if watcher restarts frequently
+    }
 })
 ```
+
+**Advanced Options:**
+
+- **`initialLookbackMs`**: Controls how far back the watcher looks when it first starts
+  - Default: `10000` (10 seconds) - catches messages sent just before watcher starts
+  - Set to `0` - only process messages sent after watcher starts (no lookback)
+  - Set to `5000` - lookback 5 seconds
+  - **Warning**: If you frequently restart the watcher, this may cause duplicate message processing
 
 ### Error Handling
 
