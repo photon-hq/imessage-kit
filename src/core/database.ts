@@ -124,7 +124,17 @@ export class IMessageDatabase {
      */
     async getMessages(filter: MessageFilter = {}): Promise<MessageQueryResult> {
         await this.ensureInit()
-        const { unreadOnly, excludeOwnMessages = true, sender, chatId, service, hasAttachments, since, limit } = filter
+        const {
+            unreadOnly,
+            excludeOwnMessages = true,
+            sender,
+            chatId,
+            service,
+            hasAttachments,
+            since,
+            search,
+            limit,
+        } = filter
 
         let query = `
         SELECT 
@@ -190,6 +200,11 @@ export class IMessageDatabase {
             params.push(macTimestampNs)
         }
 
+        if (search) {
+            query += ' AND (message.text LIKE ? OR message.attributedBody LIKE ?)'
+            params.push(`%${search}%`, `%${search}%`)
+        }
+
         query += ' ORDER BY message.date DESC'
 
         if (limit) {
@@ -214,18 +229,19 @@ export class IMessageDatabase {
     /**
      * Get unread messages grouped by sender
      *
-     * @returns Map where key is sender identifier and value is array of messages from that sender
+     * @returns Object with grouped messages and total count
      *
      * @example
      * ```ts
-     * const grouped = await db.getUnreadMessages()
+     * const { grouped, total } = await db.getUnreadMessages()
      * for (const [sender, messages] of grouped) {
      *   console.log(`${sender}: ${messages.length} unread messages`)
      * }
+     * console.log(`Total: ${total}`)
      * ```
      */
-    async getUnreadMessages(): Promise<Map<string, Message[]>> {
-        const { messages } = await this.getMessages({ unreadOnly: true })
+    async getUnreadMessages(): Promise<{ grouped: Map<string, Message[]>; total: number }> {
+        const { messages, total } = await this.getMessages({ unreadOnly: true })
         const grouped = new Map<string, Message[]>()
 
         for (const msg of messages) {
@@ -237,16 +253,29 @@ export class IMessageDatabase {
             }
         }
 
-        return grouped
+        return { grouped, total }
     }
 
     /**
-     * List chats with basic information
+     * List chats with filtering and sorting options
      *
-     * Returns chat identifier, display name, last message time, and group flag.
+     * @param options Filter and sort options
+     * @returns Array of chat summaries with unread counts
+     *
+     * @example
+     * ```ts
+     * // Get recent group chats with unread messages
+     * const chats = await db.listChats({
+     *   type: 'group',
+     *   hasUnread: true,
+     *   limit: 20
+     * })
+     * ```
      */
-    async listChats(limit?: number): Promise<ChatSummary[]> {
+    async listChats(options: import('../types/message').ListChatsOptions = {}): Promise<ChatSummary[]> {
         await this.ensureInit()
+        const { limit, type = 'all', hasUnread, sortBy = 'recent', search } = options
+
         let query = `
         SELECT 
             chat.chat_identifier AS chat_identifier,
@@ -259,12 +288,48 @@ export class IMessageDatabase {
               INNER JOIN message ON message.ROWID = cmj.message_id 
               WHERE cmj.chat_id = chat.ROWID
             ) AS last_date,
-            (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 AS is_group_chat
+            (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 AS is_group_chat,
+            (
+              SELECT COUNT(*) 
+              FROM chat_message_join cmj 
+              INNER JOIN message ON message.ROWID = cmj.message_id 
+              WHERE cmj.chat_id = chat.ROWID 
+                AND message.is_read = 0 
+                AND message.is_from_me = 0
+            ) AS unread_count
         FROM chat
-        ORDER BY (last_date IS NULL), last_date DESC
+        WHERE 1=1
         `
 
         const params: (string | number)[] = []
+
+        // Filter by type
+        if (type === 'group') {
+            query += ' AND (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1'
+        } else if (type === 'dm') {
+            query += ' AND (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) <= 1'
+        }
+
+        // Filter by unread
+        if (hasUnread) {
+            query +=
+                ' AND (SELECT COUNT(*) FROM chat_message_join cmj INNER JOIN message ON message.ROWID = cmj.message_id WHERE cmj.chat_id = chat.ROWID AND message.is_read = 0 AND message.is_from_me = 0) > 0'
+        }
+
+        // Search by display name
+        if (search) {
+            query += ' AND chat.display_name LIKE ?'
+            params.push(`%${search}%`)
+        }
+
+        // Sort order
+        if (sortBy === 'recent') {
+            query += ' ORDER BY (last_date IS NULL), last_date DESC'
+        } else if (sortBy === 'name') {
+            query += ' ORDER BY (chat.display_name IS NULL), chat.display_name ASC'
+        }
+
+        // Limit
         if (limit && limit > 0) {
             query += ' LIMIT ?'
             params.push(limit)
@@ -296,12 +361,14 @@ export class IMessageDatabase {
                 const displayName = row.display_name == null ? null : str(row.display_name)
                 const lastDateRaw = row.last_date
                 const lastMessageAt = typeof lastDateRaw === 'number' ? this.convertMacTimestamp(lastDateRaw) : null
+                const unreadCount = typeof row.unread_count === 'number' ? row.unread_count : 0
 
                 return {
                     chatId,
                     displayName,
                     lastMessageAt,
                     isGroup,
+                    unreadCount,
                 }
             })
         } catch (error) {

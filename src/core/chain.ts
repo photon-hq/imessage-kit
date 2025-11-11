@@ -3,7 +3,9 @@
  */
 
 import type { Mapper, Predicate } from '../types/advanced'
+import { asRecipient } from '../types/advanced'
 import type { Message } from '../types/message'
+import { extractRecipientFromChatId, isGroupChatId } from '../utils/common'
 import type { MessageSender } from './sender'
 
 /**
@@ -101,12 +103,24 @@ export class MessageChain {
 
     /**
      * Reply with text
+     *
+     * Automatically routes to recipient or group based on message.chatId
      */
     replyText(text: string | Mapper<Message, string>): this {
         if (this.shouldExecute) {
             this.actions.push(async () => {
                 const replyText = typeof text === 'function' ? text(this.message) : text
-                await this.sender.text(this.message.chatId, replyText)
+
+                // Determine if chatId is a group or recipient
+                if (isGroupChatId(this.message.chatId)) {
+                    // Group chat - use sendToGroup
+                    await this.sender.sendToGroup({ groupId: this.message.chatId, text: replyText })
+                } else {
+                    // DM - extract recipient and use send
+                    const extracted = extractRecipientFromChatId(this.message.chatId)
+                    const recipient = extracted || asRecipient(this.message.chatId)
+                    await this.sender.send({ to: recipient, text: replyText })
+                }
             })
         }
         return this
@@ -114,13 +128,25 @@ export class MessageChain {
 
     /**
      * Reply with image
+     *
+     * Automatically routes to recipient or group based on message.chatId
      */
     replyImage(images: string | string[] | Mapper<Message, string | string[]>): this {
         if (this.shouldExecute) {
             this.actions.push(async () => {
                 const imagePaths = typeof images === 'function' ? images(this.message) : images
                 const paths = Array.isArray(imagePaths) ? imagePaths : [imagePaths]
-                await this.sender.textWithImages(this.message.chatId, '', paths)
+
+                // Determine if chatId is a group or recipient
+                if (isGroupChatId(this.message.chatId)) {
+                    // Group chat - use sendToGroup
+                    await this.sender.sendToGroup({ groupId: this.message.chatId, attachments: paths })
+                } else {
+                    // DM - extract recipient and use send
+                    const extracted = extractRecipientFromChatId(this.message.chatId)
+                    const recipient = extracted || asRecipient(this.message.chatId)
+                    await this.sender.send({ to: recipient, attachments: paths })
+                }
             })
         }
         return this

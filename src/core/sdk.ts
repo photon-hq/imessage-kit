@@ -23,16 +23,24 @@
  */
 
 import { type Plugin, PluginManager } from '../plugins/core'
-import type { Recipient } from '../types/advanced'
-import { asRecipient } from '../types/advanced'
+import { type Recipient, asRecipient } from '../types/advanced'
 import type { IMessageConfig, ResolvedConfig } from '../types/config'
-import type { ChatSummary, Message, MessageFilter, MessageQueryResult, SendResult } from '../types/message'
-import { validateChatId } from '../utils/common'
+import type {
+    ChatSummary,
+    ListChatsOptions,
+    Message,
+    MessageFilter,
+    MessageQueryResult,
+    UnreadMessagesResult,
+} from '../types/message'
+import { extractRecipientFromChatId, isGroupChatId, validateChatId } from '../utils/common'
 import { getDefaultDatabasePath, requireMacOS } from '../utils/platform'
 import { TempFileManager } from '../utils/temp-file-manager'
 import { MessageChain } from './chain'
+import { ERROR_SDK_DESTROYED, ERROR_WATCHER_RUNNING } from './constants'
 import { IMessageDatabase } from './database'
-import { MessageSender } from './sender'
+import { OutgoingMessageManager } from './outgoing-manager'
+import { MessageSender, type SendResult } from './sender'
 import { MessageWatcher, type WatcherEvents } from './watcher'
 
 /** SDK dependency injection interface */
@@ -62,6 +70,9 @@ export class IMessageSDK {
     /** Message watcher */
     private watcher: MessageWatcher | null = null
 
+    /** Outgoing message manager */
+    private readonly outgoingManager: OutgoingMessageManager
+
     /** Whether destroyed */
     private destroyed = false
 
@@ -87,6 +98,13 @@ export class IMessageSDK {
             )
 
         this.pluginManager = dependencies?.pluginManager ?? new PluginManager()
+
+        this.outgoingManager = new OutgoingMessageManager(this.config.debug)
+
+        // Connect sender with outgoingManager (if sender supports it)
+        if ('setOutgoingManager' in this.sender && typeof this.sender.setOutgoingManager === 'function') {
+            this.sender.setOutgoingManager(this.outgoingManager)
+        }
 
         if (config.plugins) {
             for (const plugin of config.plugins) {
@@ -139,33 +157,47 @@ export class IMessageSDK {
     }
 
     /**
-     * Generic wrapper for sending messages to a chat by chatId
+     * Determine if a string is a chatId (not a recipient)
+     *
+     * ChatId formats:
+     * - Group GUID: `chat123...`
+     * - AppleScript group: `iMessage;+;chat123...`
+     *
+     * Recipient formats:
+     * - Phone: `+1234567890`
+     * - Email: `user@example.com`
+     *
+     * Note: `iMessage;+1234567890` is NOT a chatId for routing purposes.
+     * It's a service-prefixed recipient that should be sent via buddy method.
      */
-    private async sendToChatWithHooks(
-        chatId: string,
-        sendFn: (chatId: string) => Promise<SendResult>,
-        content: { text?: string; attachments?: string[] }
-    ): Promise<SendResult> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+    private isChatId(value: string): boolean {
+        // Use helper to check if it's a group chat
+        if (isGroupChatId(value)) {
+            return true
+        }
 
-        // Validate chatId format early (GUID for groups, or "<service>;<address>" for DMs)
-        validateChatId(chatId)
-
-        await this.ensurePluginsReady()
-        await this.pluginManager.callHookForAll('onBeforeSend', chatId, content)
-
-        const result = await sendFn(chatId)
-
-        await this.pluginManager.callHookForAll('onAfterSend', chatId, result)
-
-        return result
+        // Try to parse as recipient
+        try {
+            asRecipient(value)
+            return false // It's a valid recipient
+        } catch {
+            // Not a valid recipient, could be service-prefixed DM
+            // Try to extract recipient from service-prefixed format
+            const extracted = extractRecipientFromChatId(value)
+            if (extracted) {
+                // It's a service-prefixed DM, treat as recipient
+                return false
+            }
+            // Unknown format, treat as chatId
+            return true
+        }
     }
 
     /**
      * Register plugin
      */
     use(plugin: Plugin): this {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         this.pluginManager.use(plugin)
         return this
     }
@@ -182,7 +214,7 @@ export class IMessageSDK {
      * Query messages
      */
     async getMessages(filter?: MessageFilter): Promise<MessageQueryResult> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
         await this.ensurePluginsReady()
         await this.pluginManager.callHookForAll('onBeforeQuery', filter)
@@ -194,33 +226,71 @@ export class IMessageSDK {
 
     /**
      * Get unread messages (grouped by sender)
+     *
+     * @returns Unread messages with statistics
+     * @example
+     * ```ts
+     * const unread = await sdk.getUnreadMessages()
+     * console.log(`${unread.total} unread messages from ${unread.senderCount} senders`)
+     * for (const { sender, messages } of unread.groups) {
+     *   console.log(`${sender}: ${messages.length} messages`)
+     * }
+     * ```
      */
-    async getUnreadMessages(): Promise<Array<{ sender: string; messages: Message[] }>> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+    async getUnreadMessages(): Promise<UnreadMessagesResult> {
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
-        const map = await this.database.getUnreadMessages()
-        return Array.from(map.entries()).map(([sender, messages]) => ({
+        await this.ensurePluginsReady()
+        await this.pluginManager.callHookForAll('onBeforeQuery', { unreadOnly: true })
+
+        const { grouped, total } = await this.database.getUnreadMessages()
+        const groups = Array.from(grouped.entries()).map(([sender, messages]) => ({
             sender,
             messages,
         }))
+
+        const result = {
+            groups,
+            total,
+            senderCount: groups.length,
+        }
+
+        // Flatten all messages for plugin hook
+        const allMessages = groups.flatMap((g) => g.messages)
+        await this.pluginManager.callHookForAll('onAfterQuery', allMessages)
+
+        return result
     }
 
     /**
-     * Send message
+     * Send message to recipient (phone/email) or chat (chatId)
+     *
+     * Automatically detects whether the target is:
+     * - A recipient (phone number or email): e.g., '+1234567890', 'user@example.com'
+     * - A chatId (group or DM): e.g., 'chat123...', 'iMessage;+1234567890'
      *
      * @example
      * ```ts
-     * await sdk.send(phone, 'Hello')
-     * await sdk.send(phone, { images: ['/img.jpg'] })
-     * await sdk.send(phone, { text: 'Hi', images: ['/img.jpg'] })
-     * await sdk.send(phone, { files: ['/document.pdf', '/contact.vcf'] })
-     * await sdk.send(phone, { text: 'Check this', files: ['/data.csv'] })
+     * // Send to phone number
+     * await sdk.send('+1234567890', 'Hello')
+     *
+     * // Send to email
+     * await sdk.send('user@example.com', 'Hello')
+     *
+     * // Send to group chat
+     * await sdk.send('chat123...', 'Hello')
+     *
+     * // Send with attachments
+     * await sdk.send('+1234567890', { images: ['/img.jpg'] })
+     * await sdk.send('chat123...', { text: 'Hi', files: ['/doc.pdf'] })
      * ```
      */
     async send(
         to: string | Recipient,
         content: string | { text?: string; images?: string[]; files?: string[] }
     ): Promise<SendResult> {
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
+
         /** Normalize to object format */
         const normalized =
             typeof content === 'string'
@@ -230,11 +300,37 @@ export class IMessageSDK {
                       attachments: [...(content.images || []), ...(content.files || [])],
                   }
 
-        // Resolve chatId for plugin hooks, but send via recipient-based path to preserve behavior
-        const recipient = typeof to === 'string' ? asRecipient(to) : to
-        const chatId = recipient.includes(';') ? recipient : `iMessage;${recipient}`
+        const target = String(to)
 
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        // Determine if target is a chatId or recipient
+        const isChatIdTarget = this.isChatId(target)
+
+        if (isChatIdTarget) {
+            // Target is a group chat - validate and send to group
+            validateChatId(target)
+
+            await this.ensurePluginsReady()
+            await this.pluginManager.callHookForAll('onBeforeSend', target, {
+                text: normalized.text,
+                attachments: normalized.attachments,
+            })
+
+            const result = await this.sender.sendToGroup({
+                groupId: target,
+                text: normalized.text,
+                attachments: normalized.attachments,
+            })
+
+            await this.pluginManager.callHookForAll('onAfterSend', target, result)
+            return result
+        }
+
+        // Target is a recipient (phone/email or service-prefixed)
+        // Extract pure recipient if it's service-prefixed (e.g., 'iMessage;+1234567890' -> '+1234567890')
+        const extracted = extractRecipientFromChatId(target)
+        const recipient = extracted || asRecipient(target)
+        const chatId = target.includes(';') ? target : `iMessage;${recipient}`
+
         await this.ensurePluginsReady()
         await this.pluginManager.callHookForAll('onBeforeSend', chatId, {
             text: normalized.text,
@@ -252,53 +348,44 @@ export class IMessageSDK {
     }
 
     /**
-     * Send message to a chat by chatId
-     */
-    async sendToChat(
-        chatId: string,
-        content: string | { text?: string; images?: string[]; files?: string[] }
-    ): Promise<SendResult> {
-        const normalized =
-            typeof content === 'string'
-                ? { text: content, attachments: [] }
-                : {
-                      text: content.text,
-                      attachments: [...(content.images || []), ...(content.files || [])],
-                  }
-
-        return this.sendToChatWithHooks(
-            chatId,
-            (c) =>
-                this.sender.sendToChat({
-                    chatId: c,
-                    text: normalized.text,
-                    attachments: normalized.attachments,
-                }),
-            {
-                text: normalized.text,
-                attachments: normalized.attachments,
-            }
-        )
-    }
-
-    /**
-     * List chats for discovering chatId easily
+     * List chats with filtering and sorting options
+     *
+     * @param options Filter and sort options (or a number for backward compatibility)
+     * @returns Array of chat summaries with unread counts
      *
      * @example
      * ```ts
-     * const chats = await sdk.listChats(50)
-     * for (const c of chats) {
-     *   console.log(c.chatId, c.displayName, c.lastMessageAt, c.isGroup)
-     * }
+     * // Get all chats
+     * const all = await sdk.listChats()
+     *
+     * // Get recent group chats with unread messages
+     * const groups = await sdk.listChats({
+     *   type: 'group',
+     *   hasUnread: true,
+     *   limit: 20
+     * })
+     *
+     * // Search chats by name
+     * const found = await sdk.listChats({
+     *   search: 'John',
+     *   sortBy: 'name'
+     * })
+     *
+     * // Backward compatible: limit only
+     * const recent = await sdk.listChats({ limit: 50 })
      * ```
      */
-    async listChats(limit?: number): Promise<ChatSummary[]> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+    async listChats(options?: ListChatsOptions | number): Promise<ChatSummary[]> {
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         await this.ensurePluginsReady()
-        // Plugins can observe queries via existing hooks if needed
-        await this.pluginManager.callHookForAll('onBeforeQuery', { limit })
-        const result = await this.database.listChats(limit)
-        // Reuse onAfterQuery to keep plugin ecosystem simple (messages not available here)
+
+        // Backward compatibility: convert number to options object
+        const opts: ListChatsOptions = typeof options === 'number' ? { limit: options } : options || {}
+
+        await this.pluginManager.callHookForAll('onBeforeQuery', opts)
+        const result = await this.database.listChats(opts)
+        // Note: onAfterQuery expects Message[], but listChats returns ChatSummary[]
+        // We pass empty array to maintain hook signature compatibility
         await this.pluginManager.callHookForAll('onAfterQuery', [])
         return result
     }
@@ -338,7 +425,7 @@ export class IMessageSDK {
             error?: Error
         }>
     > {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
 
         const results = await Promise.allSettled(
             messages.map(async ({ to, content }) => ({
@@ -368,37 +455,37 @@ export class IMessageSDK {
     /**
      * Send file (convenience method)
      *
+     * Supports both recipient (phone/email) and chatId
+     *
      * @example
      * ```ts
+     * // Send to phone number
      * await sdk.sendFile('+1234567890', '/path/to/document.pdf')
-     * await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Here is the contact')
+     *
+     * // Send to group chat
+     * await sdk.sendFile('chat123...', '/path/to/document.pdf', 'Here is the file')
      * ```
      */
     async sendFile(to: string | Recipient, filePath: string, text?: string): Promise<SendResult> {
         return this.send(to, { text, files: [filePath] })
     }
 
-    /** Send single file to a chat by chatId */
-    async sendFileToChat(chatId: string, filePath: string, text?: string): Promise<SendResult> {
-        return this.sendToChat(chatId, { text, files: [filePath] })
-    }
-
     /**
      * Send multiple files (convenience method)
      *
+     * Supports both recipient (phone/email) and chatId
+     *
      * @example
      * ```ts
+     * // Send to phone number
      * await sdk.sendFiles('+1234567890', ['/file1.pdf', '/file2.csv'])
-     * await sdk.sendFiles('+1234567890', ['/data.xlsx'], 'Check these files')
+     *
+     * // Send to group chat
+     * await sdk.sendFiles('chat123...', ['/data.xlsx'], 'Check these files')
      * ```
      */
     async sendFiles(to: string | Recipient, filePaths: string[], text?: string): Promise<SendResult> {
         return this.send(to, { text, files: filePaths })
-    }
-
-    /** Send multiple files to a chat by chatId */
-    async sendFilesToChat(chatId: string, filePaths: string[], text?: string): Promise<SendResult> {
-        return this.sendToChat(chatId, { text, files: filePaths })
     }
 
     // ==================== Message Chain Processing ====================
@@ -407,7 +494,7 @@ export class IMessageSDK {
      * Create message processing chain
      */
     message(message: Message) {
-        if (this.destroyed) throw new Error('SDK is destroyed')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
         return new MessageChain(message, this.sender)
     }
 
@@ -415,8 +502,8 @@ export class IMessageSDK {
      * Start watching for new messages
      */
     async startWatching(events?: WatcherEvents): Promise<void> {
-        if (this.destroyed) throw new Error('SDK is destroyed')
-        if (this.watcher) throw new Error('Watcher is already running')
+        if (this.destroyed) throw new Error(ERROR_SDK_DESTROYED)
+        if (this.watcher) throw new Error(ERROR_WATCHER_RUNNING)
 
         const watcher = new MessageWatcher(
             this.database,
@@ -426,7 +513,8 @@ export class IMessageSDK {
             this.config.webhook,
             events,
             this.pluginManager,
-            this.config.debug
+            this.config.debug,
+            this.outgoingManager
         )
 
         try {
@@ -466,7 +554,17 @@ export class IMessageSDK {
         }
         this.watcher = null
 
-        /** 2. Destroy plugins */
+        /** 2. Reject all pending message promises */
+        try {
+            this.outgoingManager.rejectAll('SDK closed')
+        } catch (error) {
+            errors.push({
+                component: 'outgoingManager',
+                error: error instanceof Error ? error : new Error(String(error)),
+            })
+        }
+
+        /** 3. Destroy plugins */
         try {
             await this.pluginManager.destroy()
         } catch (error) {
@@ -476,7 +574,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 3. Destroy temporary file manager (clean up all temp files) */
+        /** 4. Destroy temporary file manager (clean up all temp files) */
         try {
             await this.tempFileManager.destroy()
         } catch (error) {
@@ -486,7 +584,7 @@ export class IMessageSDK {
             })
         }
 
-        /** 4. Close database */
+        /** 5. Close database */
         try {
             this.database.close()
         } catch (error) {

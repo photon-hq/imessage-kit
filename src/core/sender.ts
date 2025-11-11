@@ -7,22 +7,30 @@ import { resolve } from 'node:path'
 import type { Recipient } from '../types/advanced'
 import { asRecipient, isURL as checkIsURL } from '../types/advanced'
 import type { RetryConfig } from '../types/config'
+import type { Message } from '../types/message'
 import {
     checkIMessageStatus,
     checkMessagesApp,
     execAppleScript,
+    generateSendAttachmentScript,
     generateSendAttachmentToChat,
+    generateSendTextScript,
     generateSendTextToChat,
+    generateSendWithAttachmentScript,
     generateSendWithAttachmentToChat,
 } from '../utils/applescript'
 import { delay, validateChatId, validateMessageContent } from '../utils/common'
 import { convertToCompatibleFormat, downloadImage } from '../utils/download'
 import { Semaphore } from '../utils/semaphore'
 import { IMessageError, SendError } from './errors'
+import { MessagePromise } from './message-promise'
+import type { OutgoingMessageManager } from './outgoing-manager'
 
 /** Send result */
 export interface SendResult {
     readonly sentAt: Date
+    /** The sent message (only available if watcher is running and message was confirmed) */
+    readonly message?: Message
 }
 
 /** Send options */
@@ -37,10 +45,10 @@ export interface SendOptions {
     readonly signal?: AbortSignal
 }
 
-/** Send options for chatId target */
-export interface SendToChatOptions {
-    /** Chat identifier */
-    readonly chatId: string
+/** Send options for group chat */
+export interface SendToGroupOptions {
+    /** Group chat identifier (GUID) */
+    readonly groupId: string
     /** Text content */
     readonly text?: string
     /** Attachments */
@@ -63,6 +71,8 @@ export class MessageSender {
     private readonly semaphore: Semaphore | null
     /** AppleScript timeout */
     private readonly scriptTimeout: number
+    /** Outgoing message manager */
+    private outgoingManager: OutgoingMessageManager | null = null
 
     constructor(debug = false, retryConfig?: Required<RetryConfig>, maxConcurrent = 5, scriptTimeout = 30000) {
         this.debug = debug
@@ -70,6 +80,13 @@ export class MessageSender {
         this.retryDelay = retryConfig?.delay ?? 1500
         this.semaphore = maxConcurrent > 0 ? new Semaphore(maxConcurrent) : null
         this.scriptTimeout = scriptTimeout
+    }
+
+    /**
+     * Set outgoing message manager (called by SDK)
+     */
+    setOutgoingManager(manager: OutgoingMessageManager): void {
+        this.outgoingManager = manager
     }
 
     /**
@@ -136,13 +153,96 @@ export class MessageSender {
     }
 
     /**
-     * Send message
+     * Send message to recipient
      */
     async send(options: SendOptions): Promise<SendResult> {
-        if (this.semaphore) {
-            return await this.semaphore.run(() => this.sendInternal(options))
+        const task = async () => {
+            const { to, text, attachments = [], signal } = options
+            const target = String(to)
+
+            this.checkAbortSignal(signal)
+
+            // Validate message content
+            let hasText: boolean
+            try {
+                const validation = validateMessageContent(text, attachments)
+                hasText = validation.hasText
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                throw SendError(errorMsg)
+            }
+
+            try {
+                this.checkAbortSignal(signal)
+                await this.checkMessagesEnvironment()
+
+                const paths = await this.prepareAttachments(attachments)
+                const recipient = asRecipient(target)
+
+                // Create message promise if outgoingManager is available
+                // Use full chat GUID format: iMessage;-;recipient (for DMs)
+                // Note: Database may store just the recipient (e.g., "pilot@photon.codes")
+                // but MessagePromise.normalizeChatId() handles both formats by extracting
+                // the core identifier (last part after semicolons), ensuring proper matching
+                const chatId = `iMessage;-;${recipient}`
+                const sentAt = new Date()
+                let messagePromise: MessagePromise | null = null
+
+                if (this.outgoingManager && paths.length > 0) {
+                    // For attachments, create promise to track delivery
+                    const attachmentName = paths[0]?.split('/').pop()
+                    messagePromise = new MessagePromise({
+                        chatId,
+                        text: text,
+                        attachmentName,
+                        isAttachment: true,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                } else if (this.outgoingManager && hasText) {
+                    // For text messages, create promise to track delivery
+                    messagePromise = new MessagePromise({
+                        chatId,
+                        text: text,
+                        isAttachment: false,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                }
+
+                // Send the message
+                await this.sendToRecipient(recipient, text, hasText, paths)
+
+                // Wait for message to appear in database (if promise was created)
+                let confirmedMessage: Message | undefined
+                if (messagePromise) {
+                    try {
+                        confirmedMessage = await messagePromise.promise
+                        if (this.debug) {
+                            console.log('[Sender] Message confirmed in database')
+                        }
+                    } catch (promiseError) {
+                        if (this.debug) {
+                            console.warn('[Sender] Message promise rejected:', promiseError)
+                        }
+                        // Don't throw - message was sent, just not confirmed
+                    }
+                }
+
+                return { sentAt, message: confirmedMessage }
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                const context = `[To: ${target}] [Text: ${hasText ? 'yes' : 'no'}] [Attachments: ${attachments.length}]`
+                const cause = error instanceof Error ? error : undefined
+
+                if (error instanceof IMessageError) {
+                    throw SendError(`${errorMsg} ${context}`, cause)
+                }
+                throw SendError(`Send failed ${context}: ${errorMsg}`, cause)
+            }
         }
-        return await this.sendInternal(options)
+
+        return this.semaphore ? await this.semaphore.run(task) : await task()
     }
 
     /**
@@ -209,10 +309,10 @@ export class MessageSender {
     }
 
     /**
-     * Execute send strategy for chatId target
+     * Send to recipient using buddy method
      */
-    private async executeSendStrategyForChat(
-        chatId: string,
+    private async sendToRecipient(
+        recipient: string,
         text: string | undefined,
         hasText: boolean,
         resolvedPaths: string[]
@@ -220,181 +320,169 @@ export class MessageSender {
         if (hasText && resolvedPaths.length > 0) {
             // Strategy 1: Text + Attachments
             const firstAttachment = resolvedPaths[0]!
-            const { script } = generateSendWithAttachmentToChat(chatId, text!, firstAttachment)
-            await this.executeWithRetry(script, `Send text and attachment to chat ${chatId}`)
+            const { script } = generateSendWithAttachmentScript(recipient, text!, firstAttachment)
+            await this.executeWithRetry(script, `Send text and attachment to ${recipient}`)
 
             // Send remaining attachments
             for (let i = 1; i < resolvedPaths.length; i++) {
-                const { script: attachScript } = generateSendAttachmentToChat(chatId, resolvedPaths[i]!, this.debug)
+                const { script: attachScript } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
                 await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
+                // Extra delay between attachments
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         } else if (hasText) {
             // Strategy 2: Text only
-            const script = generateSendTextToChat(chatId, text!)
-            await this.executeWithRetry(script, `Send text to chat ${chatId}`)
+            const script = generateSendTextScript(recipient, text!)
+            await this.executeWithRetry(script, `Send text to ${recipient}`)
         } else {
             // Strategy 3: Attachments only
             for (let i = 0; i < resolvedPaths.length; i++) {
-                const { script } = generateSendAttachmentToChat(chatId, resolvedPaths[i]!, this.debug)
-                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to chat ${chatId}`
+                const { script } = generateSendAttachmentScript(recipient, resolvedPaths[i]!, this.debug)
+                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to ${recipient}`
                 await this.executeWithRetry(script, description)
+                // Extra delay between attachments to ensure previous one is sent
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
             }
         }
     }
 
     /**
-     * Send message (internal implementation)
+     * Send to group using chat id method
      */
-    private async sendInternal(options: SendOptions): Promise<SendResult> {
-        const { to, text, attachments = [], signal } = options
-        const rawTarget = String(to)
+    private async sendToGroupChat(
+        groupId: string,
+        text: string | undefined,
+        hasText: boolean,
+        resolvedPaths: string[]
+    ): Promise<void> {
+        if (hasText && resolvedPaths.length > 0) {
+            // Strategy 1: Text + Attachments
+            const firstAttachment = resolvedPaths[0]!
+            const { script } = generateSendWithAttachmentToChat(groupId, text!, firstAttachment)
+            await this.executeWithRetry(script, `Send text and attachment to group ${groupId}`)
 
-        this.checkAbortSignal(signal)
-
-        // Validate message content
-        let hasText: boolean
-        try {
-            const validation = validateMessageContent(text, attachments)
-            hasText = validation.hasText
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            throw SendError(errorMsg)
+            // Send remaining attachments
+            for (let i = 1; i < resolvedPaths.length; i++) {
+                const { script: attachScript } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
+                await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
+                // Extra delay between attachments
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
+            }
+        } else if (hasText) {
+            // Strategy 2: Text only
+            const script = generateSendTextToChat(groupId, text!)
+            await this.executeWithRetry(script, `Send text to group ${groupId}`)
+        } else {
+            // Strategy 3: Attachments only
+            for (let i = 0; i < resolvedPaths.length; i++) {
+                const { script } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
+                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to group ${groupId}`
+                await this.executeWithRetry(script, description)
+                // Extra delay between attachments to ensure previous one is sent
+                if (i < resolvedPaths.length - 1) {
+                    await delay(500)
+                }
+            }
         }
+    }
 
-        try {
+    /**
+     * Send message to group chat
+     */
+    async sendToGroup(options: SendToGroupOptions): Promise<SendResult> {
+        const task = async () => {
+            const { groupId, text, attachments = [], signal } = options
+
             this.checkAbortSignal(signal)
 
-            // Check environment
-            await this.checkMessagesEnvironment()
-
-            // Prepare attachments
-            const resolvedPaths = await this.prepareAttachments(attachments)
-
-            // Determine chatId target
-            // 1) If provided value is a valid recipient (phone/email), prefix service and route as DM
-            // 2) Otherwise, treat provided value as chatId (supports group GUIDs or service-prefixed DMs)
-            let chatId: string
+            // Validate groupId format
             try {
-                const validatedRecipient = asRecipient(rawTarget)
-                chatId = rawTarget.includes(';') ? rawTarget : `iMessage;${validatedRecipient}`
-            } catch {
-                // Not a valid recipient; validate as chatId (GUID or '<service>;<address>')
-                validateChatId(rawTarget)
-                chatId = rawTarget
+                validateChatId(groupId)
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                throw SendError(errorMsg)
             }
-            await this.executeSendStrategyForChat(chatId, text, hasText, resolvedPaths)
 
-            return { sentAt: new Date() }
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            const contextInfo =
-                `[ChatId: ${(() => {
+            // Validate message content
+            let hasText: boolean
+            try {
+                const validation = validateMessageContent(text, attachments)
+                hasText = validation.hasText
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                throw SendError(errorMsg)
+            }
+
+            try {
+                this.checkAbortSignal(signal)
+                await this.checkMessagesEnvironment()
+
+                const paths = await this.prepareAttachments(attachments)
+
+                // Create message promise if outgoingManager is available
+                const sentAt = new Date()
+                let messagePromise: MessagePromise | null = null
+
+                if (this.outgoingManager && paths.length > 0) {
+                    // For attachments, create promise to track delivery
+                    const attachmentName = paths[0]?.split('/').pop()
+                    messagePromise = new MessagePromise({
+                        chatId: groupId,
+                        text: text,
+                        attachmentName,
+                        isAttachment: true,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                } else if (this.outgoingManager && hasText) {
+                    // For text messages, create promise to track delivery
+                    messagePromise = new MessagePromise({
+                        chatId: groupId,
+                        text: text,
+                        isAttachment: false,
+                        sentAt,
+                    })
+                    this.outgoingManager.add(messagePromise)
+                }
+
+                // Send the message
+                await this.sendToGroupChat(groupId, text, hasText, paths)
+
+                // Wait for message to appear in database (if promise was created)
+                let confirmedMessage: Message | undefined
+                if (messagePromise) {
                     try {
-                        const validatedRecipient = asRecipient(rawTarget)
-                        return rawTarget.includes(';') ? rawTarget : `iMessage;${validatedRecipient}`
-                    } catch {
-                        return rawTarget
+                        confirmedMessage = await messagePromise.promise
+                        if (this.debug) {
+                            console.log('[Sender] Group message confirmed in database')
+                        }
+                    } catch (promiseError) {
+                        if (this.debug) {
+                            console.warn('[Sender] Group message promise rejected:', promiseError)
+                        }
+                        // Don't throw - message was sent, just not confirmed
                     }
-                })()}] ` +
-                `[Text: ${hasText ? 'yes' : 'no'}] ` +
-                `[Attachments: ${attachments.length}]`
+                }
 
-            if (error instanceof IMessageError) {
-                throw SendError(`${errorMsg} ${contextInfo}`)
+                return { sentAt, message: confirmedMessage }
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                const context = `[Group: ${groupId}] [Text: ${hasText ? 'yes' : 'no'}] [Attachments: ${attachments.length}]`
+                const cause = error instanceof Error ? error : undefined
+
+                if (error instanceof IMessageError) {
+                    throw SendError(`${errorMsg} ${context}`, cause)
+                }
+                throw SendError(`Send failed ${context}: ${errorMsg}`, cause)
             }
-
-            throw SendError(`Send failed ${contextInfo}: ${errorMsg}`)
-        }
-    }
-
-    /**
-     * Send message to a chat by chatId
-     */
-    async sendToChat(options: SendToChatOptions): Promise<SendResult> {
-        if (this.semaphore) {
-            return await this.semaphore.run(() => this.sendToChatInternal(options))
-        }
-        return await this.sendToChatInternal(options)
-    }
-
-    /**
-     * Internal implementation for chatId send
-     */
-    private async sendToChatInternal(options: SendToChatOptions): Promise<SendResult> {
-        const { chatId, text, attachments = [], signal } = options
-
-        this.checkAbortSignal(signal)
-
-        // Validate chatId format early
-        try {
-            validateChatId(chatId)
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            throw SendError(errorMsg)
         }
 
-        // Validate message content
-        let hasText: boolean
-        try {
-            const validation = validateMessageContent(text, attachments)
-            hasText = validation.hasText
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            throw SendError(errorMsg)
-        }
-
-        try {
-            this.checkAbortSignal(signal)
-
-            // Check environment
-            await this.checkMessagesEnvironment()
-
-            // Prepare attachments
-            const resolvedPaths = await this.prepareAttachments(attachments)
-
-            // Execute send (chatId)
-            await this.executeSendStrategyForChat(chatId, text, hasText, resolvedPaths)
-
-            return { sentAt: new Date() }
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            const contextInfo =
-                `[ChatId: ${chatId}] ` + `[Text: ${hasText ? 'yes' : 'no'}] ` + `[Attachments: ${attachments.length}]`
-
-            if (error instanceof IMessageError) {
-                throw SendError(`${errorMsg} ${contextInfo}`)
-            }
-
-            throw SendError(`Send failed ${contextInfo}: ${errorMsg}`)
-        }
-    }
-
-    async text(to: string | Recipient, text: string): Promise<SendResult> {
-        return this.send({ to, text })
-    }
-
-    async image(to: string | Recipient, imagePath: string): Promise<SendResult> {
-        return this.send({ to, attachments: [imagePath] })
-    }
-
-    async textWithImages(to: string | Recipient, text: string | undefined, imagePaths: string[]): Promise<SendResult> {
-        return this.send({
-            to,
-            text,
-            attachments: imagePaths,
-        })
-    }
-
-    /** Convenience helpers for chatId target */
-    async textToChat(chatId: string, text: string): Promise<SendResult> {
-        return this.sendToChat({ chatId, text })
-    }
-
-    async imageToChat(chatId: string, imagePath: string): Promise<SendResult> {
-        return this.sendToChat({ chatId, attachments: [imagePath] })
-    }
-
-    async textWithImagesToChat(chatId: string, text: string | undefined, imagePaths: string[]): Promise<SendResult> {
-        return this.sendToChat({ chatId, text, attachments: imagePaths })
+        return this.semaphore ? await this.semaphore.run(task) : await task()
     }
 }

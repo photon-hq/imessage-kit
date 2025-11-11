@@ -164,21 +164,23 @@ describe('IMessageDatabase', () => {
         })
 
         it('should group unread messages by sender', async () => {
-            const grouped = await database.getUnreadMessages()
+            const result = await database.getUnreadMessages()
 
-            expect(grouped.size).toBe(2)
-            expect(grouped.get('+1111111111')?.length).toBe(2)
-            expect(grouped.get('+2222222222')?.length).toBe(1)
-            expect(grouped.has('+3333333333')).toBe(false)
+            expect(result.grouped.size).toBe(2)
+            expect(result.total).toBe(3)
+            expect(result.grouped.get('+1111111111')?.length).toBe(2)
+            expect(result.grouped.get('+2222222222')?.length).toBe(1)
+            expect(result.grouped.has('+3333333333')).toBe(false)
         })
 
         it('should return empty map when no unread messages', async () => {
             // Mark all as read
             mockDb.db.prepare('UPDATE message SET is_read = 1').run()
 
-            const grouped = await database.getUnreadMessages()
+            const result = await database.getUnreadMessages()
 
-            expect(grouped.size).toBe(0)
+            expect(result.grouped.size).toBe(0)
+            expect(result.total).toBe(0)
         })
     })
 

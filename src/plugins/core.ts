@@ -9,7 +9,8 @@
  * - When errors occur
  */
 
-import type { Message, SendResult } from '../types/message'
+import type { SendResult } from '../core/sender'
+import type { Message } from '../types/message'
 
 /**
  * Plugin lifecycle hooks

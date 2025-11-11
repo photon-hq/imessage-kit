@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/@photon-ai/imessage-kit.svg)](https://www.npmjs.com/package/@photon-ai/imessage-kit)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/RSJUUHTV)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/bZd4CMd2H5)
 
 It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
 Built for developers who want to integrate messaging into their **AI agents, automation scripts**, or **chat-first apps**, without AppleScript headaches.
@@ -88,8 +88,9 @@ const sdk = new IMessageSDK({
 })
 
 // Get unread messages
-const unreadMessages = await sdk.getUnreadMessages()
-for (const { sender, messages } of unreadMessages) {
+const unread = await sdk.getUnreadMessages()
+console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+for (const { sender, messages } of unread.groups) {
     console.log(`${sender}: ${messages.length} unread messages`)
 }
 
@@ -119,23 +120,44 @@ const filtered = await sdk.getMessages({
     since: new Date('2025-10-20')
 })
 
+// Search messages by text content
+const searchResults = await sdk.getMessages({
+    search: 'meeting',
+    limit: 50
+})
+
 // Include your own messages
 const all = await sdk.getMessages({ excludeOwnMessages: false })
 
 // Get unread messages grouped by sender
 const unread = await sdk.getUnreadMessages()
+console.log(`Total: ${unread.total}, Senders: ${unread.senderCount}`)
 ```
 
 ### Sending Messages
 
 ```typescript
-// Unified send API
-await sdk.send(recipient, content)
+// Unified send API - automatically detects recipient or chatId
+await sdk.send(target, content)
 
-// Send text only
+// Get sent message immediately (requires watcher)
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello!')
+if (result.message) {
+    console.log('Sent message:', result.message.text)
+    console.log('Message ID:', result.message.id)
+}
+
+// Send to phone number
 await sdk.send('+1234567890', 'Hello World!')
 
-// Send images only
+// Send to email
+await sdk.send('user@example.com', 'Hello!')
+
+// Send to group chat (using chatId)
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+
+// Send images
 await sdk.send('+1234567890', { 
     images: ['image1.jpg', 'image2.png'] 
 })
@@ -157,45 +179,81 @@ await sdk.send('+1234567890', {
     images: ['https://example.com/image.jpg'] 
 })
 
-// Convenience methods for files
+// Convenience methods for files (works with both recipient and chatId)
 await sdk.sendFile('+1234567890', '/path/to/document.pdf')
-await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Here is the contact')
+await sdk.sendFile('chat123...', '/path/to/report.pdf', 'Here is the file')
 await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
 
 // Batch sending
 await sdk.sendBatch([
     { to: '+1111111111', content: 'Message 1' },
     { to: '+2222222222', content: { text: 'Message 2', images: ['img.jpg'] } },
-    { to: '+3333333333', content: { files: ['document.pdf'] } }
+    { to: 'chat123...', content: { files: ['document.pdf'] } }
 ])
-
-// Send to a chat by chatId (group or DM)
-// Group chatId uses GUID (no service prefix)
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFileToChat('chat45e2b868ce1e43da89af262922733382', '/path/to/report.pdf')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
-// DM chatId format and auto-conversion
-// You can still call sdk.send('+1234567890', 'Hello'), which internally
-// converts to the chatId "iMessage;+1234567890" and sends via chat.
-// For email DM: sdk.send('user@example.com', 'Hello') -> "iMessage;user@example.com"
 ```
+
+**Note**: The `send()` method automatically detects whether you're sending to:
+- A **recipient** (phone number or email): `'+1234567890'`, `'user@example.com'`
+- A **chatId** (group or DM): `'chat123...'`, `'iMessage;+1234567890'`
 
 ### Listing Chats
 
-`listChats()` returns both group and direct chats, providing a stable routing key `chatId`:
-
-- Group: `chatId = chat.guid` (stable GUID, recommended for all group routing)
-- Direct (DM): `chatId = "<service>;<address>"` (for example `iMessage;+1234567890` or `SMS;+1234567890`)
+`listChats()` returns both group and direct chats with filtering and sorting options:
 
 ```typescript
-const chats = await sdk.listChats(50) // optional limit
+// Get all chats
+const all = await sdk.listChats()
+
+// Get recent group chats with unread messages
+const groups = await sdk.listChats({
+    type: 'group',
+    hasUnread: true,
+    limit: 20
+})
+
+// Search chats by name
+const found = await sdk.listChats({
+    search: 'John',
+    sortBy: 'name'
+})
+
+// Backward compatible: limit only
+const recent = await sdk.listChats(50)
+
+// Each chat includes unreadCount
 for (const c of chats) {
-  // Use chatId directly for routing, no need to resolve by name or messages
-  console.log({ chatId: c.chatId, name: c.displayName, last: c.lastMessageAt, isGroup: c.isGroup })
+  console.log({
+    chatId: c.chatId,
+    name: c.displayName,
+    last: c.lastMessageAt,
+    isGroup: c.isGroup,
+    unread: c.unreadCount  // ← New field
+  })
 }
 ```
 
-Note: `sendToChat(chatId, ...)` accepts both formats above. Also, `sdk.send('+1234567890', 'Hello')` is automatically converted to the DM chatId `iMessage;+1234567890` and sent through the unified chat flow.
+**ChatId formats:**
+- Group: `chatId = chat.guid` (stable GUID, recommended for all group routing)
+- Direct (DM): `chatId = "<service>;<address>"` (for example `iMessage;+1234567890` or `SMS;+1234567890`)
+
+**Note on ChatId formats:**
+- Group chats: Use the GUID from `listChats()` (e.g., `chat45e2b868ce1e43da89af262922733382`)
+- Direct messages: Use phone/email directly (e.g., `+1234567890`, `user@example.com`)
+- The SDK also accepts AppleScript format `iMessage;+;chat...` for groups (auto-normalized)
+- Service-prefixed DMs like `iMessage;+1234567890` are supported (from database)
+
+**ChatId Format Matching:**
+
+The SDK intelligently handles different chatId formats to ensure reliable message tracking:
+
+- **When sending**: The SDK constructs chatIds in the format `iMessage;-;recipient` for DMs
+- **In database**: Messages may be stored with just the recipient (e.g., `pilot@photon.codes`)
+- **Automatic normalization**: The SDK extracts the core identifier (the part after the last semicolon) to match both formats
+  - `iMessage;-;pilot@photon.codes` → normalizes to `pilot@photon.codes`
+  - `pilot@photon.codes` → normalizes to `pilot@photon.codes`
+  - Both match successfully ✓
+
+This ensures that sent messages are correctly tracked and resolved, even when database and constructed formats differ.
 
 ### Message Chain Processing
 
@@ -241,16 +299,12 @@ const sdk = new IMessageSDK({
     }
 })
 
-// Start watching
+// Start watching for direct messages
 await sdk.startWatching({
-    onNewMessage: async (message) => {
+    onDirectMessage: async (message) => {
         await sdk.message(message)
             .replyText('Thanks!')
             .execute()
-    },
-    
-    onGroupMessage: async (message) => {
-        console.log('Group:', message.chatId)
     },
     
     onError: (error) => {
@@ -259,6 +313,36 @@ await sdk.startWatching({
 })
 
 sdk.stopWatching()
+```
+
+**More examples:**
+
+```typescript
+// Watch all messages (DMs + groups)
+await sdk.startWatching({
+    onMessage: async (message) => {
+        console.log(`New message from ${message.sender}: ${message.text}`)
+    }
+})
+
+// Watch only group messages
+await sdk.startWatching({
+    onGroupMessage: async (message) => {
+        console.log(`Group message in ${message.chatId}`)
+    }
+})
+
+// Watch both DMs and groups separately
+await sdk.startWatching({
+    onDirectMessage: async (message) => {
+        // Handle DM
+        await sdk.send(message.sender, 'Thanks for your DM!')
+    },
+    onGroupMessage: async (message) => {
+        // Handle group message
+        console.log(`Group: ${message.chatId}`)
+    }
+})
 ```
 
 ### Webhook Integration
@@ -275,6 +359,49 @@ await sdk.startWatching()
 // Webhook receives: { event, message, timestamp }
 ```
 
+### Working with Attachments
+
+The SDK provides helper functions for working with attachments:
+
+```typescript
+import {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentSize,
+    isImageAttachment,
+    isVideoAttachment
+} from '@photon-ai/imessage-kit'
+
+const message = await sdk.getMessages({ hasAttachments: true, limit: 1 })
+const attachment = message.messages[0].attachments[0]
+
+// Check if file exists
+if (await attachmentExists(attachment)) {
+    // Get file size
+    const size = await getAttachmentSize(attachment)
+    console.log(`File size: ${(size / 1024 / 1024).toFixed(2)} MB`)
+    
+    // Check file type
+    if (isImageAttachment(attachment)) {
+        // Download image
+        await downloadAttachment(attachment, '/path/to/save/image.jpg')
+    } else if (isVideoAttachment(attachment)) {
+        console.log('Video file')
+    }
+}
+```
+
+**Available helpers:**
+- `attachmentExists(attachment)` - Check if file exists
+- `downloadAttachment(attachment, destPath)` - Copy file to destination
+- `getAttachmentSize(attachment)` - Get file size in bytes
+- `getAttachmentMetadata(attachment)` - Get file stats
+- `readAttachment(attachment)` - Read file as Buffer
+- `getAttachmentExtension(attachment)` - Get file extension
+- `isImageAttachment(attachment)` - Check if image
+- `isVideoAttachment(attachment)` - Check if video
+- `isAudioAttachment(attachment)` - Check if audio
+
 ## Plugin System
 
 Extend SDK functionality with plugins:
@@ -285,7 +412,8 @@ import { loggerPlugin } from '@photon-ai/imessage-kit'
 // Use built-in logger plugin
 sdk.use(loggerPlugin({
     level: 'info',
-    prefix: '[iMessage]'
+    colored: true,
+    timestamp: false
 }))
 
 // Create custom plugin
@@ -309,66 +437,41 @@ const customPlugin = {
 sdk.use(customPlugin)
 ```
 
-### Group Chat ChatId: How to Find and Use
+### Finding Group Chat IDs
 
-Find the `chatId` for a group chat first, then use it to send messages reliably.
-
-1) Find Group ChatId (no database permission required)
-
-- Use the AppleScript helper example to list chats and GUIDs:
-
-```bash
-# List all chats (filters groups only)
-GROUPS_ONLY=true bun run examples/list-chats-applescript.ts
-
-# Filter by name keyword (case-insensitive)
-GROUPS_ONLY=true Q="project" bun run examples/list-chats-applescript.ts
-```
-
-This produces lines like:
-
-```
-chatId=iMessage;+;chat61321855167474084 | name=Project Team | type=GROUP
-```
-
-2) Find Group ChatId (requires Full Disk Access)
-
-- If you prefer a database-backed list with `lastMessageAt` and `displayName`, call `listChats()` or use the example:
-
-```bash
-bun run examples/list-chats.ts
-```
-
-Note: Database access requires granting Full Disk Access under System Settings → Privacy & Security → Full Disk Access for your terminal/IDE.
-
-3) Use the ChatId to send to the group
-
-- Programmatic usage:
+To send messages to a group chat, you need its `chatId`. Use `listChats()` to find it:
 
 ```typescript
-await sdk.sendToChat('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
-await sdk.sendFilesToChat('chat45e2b868ce1e43da89af262922733382', ['/file1.pdf', '/file2.csv'], 'Docs attached')
+// List all chats
+const chats = await sdk.listChats()
+
+// Filter for group chats only
+const groups = await sdk.listChats({ type: 'group' })
+
+// Search by name
+const projectChats = await sdk.listChats({ search: 'Project', type: 'group' })
+
+// Each chat has a chatId you can use for sending
+for (const chat of groups) {
+    console.log(`${chat.displayName}: ${chat.chatId}`)
+}
 ```
 
-- CLI example using the helper script:
+Then use the `chatId` to send messages:
 
-```bash
-# Send a text message
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Hello from iMessage Kit" bun run examples/send-to-group.ts
-
-# Send images/files
-CHAT_ID="iMessage;+;chat61321855167474084" TEXT="Please check" IMAGES="/path/a.jpg,/path/b.png" bun run examples/send-to-group.ts
-CHAT_ID="iMessage;+;chat61321855167474084" FILES="/path/report.pdf" bun run examples/send-to-group.ts
+```typescript
+// Send to group using chatId from listChats()
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+await sdk.send('chat45e2b868ce1e43da89af262922733382', {
+    text: 'Check these files',
+    files: ['/file1.pdf', '/file2.csv']
+})
 ```
 
-ChatId formats:
-
-- Group: GUID-like string (often appears as `iMessage;+;chat...` when coming from AppleScript; validated as a group chatId without requiring a semicolon delimiter).
-- DM: `<service>;<address>` (e.g., `iMessage;+1234567890`, `SMS;+1234567890`, `iMessage;user@example.com`).
-
-Validation: passing an invalid `chatId` (unsupported service prefix or malformed GUID) to `sendToChat()` throws early with a clear error.
-
-Plugins: `onBeforeSend` / `onAfterSend` receive the unified target (chatId). If you previously treated `to` as phone/email, update plugins to handle chatIds.
+**ChatId Formats:**
+- **Group chats**: GUID format (e.g., `chat45e2b868ce1e43da89af262922733382`)
+- **Direct messages**: `service;address` format (e.g., `iMessage;+1234567890`)
+- The SDK also accepts AppleScript format `iMessage;+;chat...` for groups (auto-normalized)
 
 ## Advanced Usage
 
@@ -380,9 +483,27 @@ const sdk = new IMessageSDK({
     maxConcurrent: 10,               // Max concurrent sends
     scriptTimeout: 30000,            // AppleScript timeout (ms)
     databasePath: '/custom/path',    // Custom database path
-    plugins: [loggerPlugin()]        // Plugins
+    plugins: [loggerPlugin()],       // Plugins
+    
+    // Watcher configuration
+    watcher: {
+        pollInterval: 2000,          // Polling interval in ms (default: 2000)
+        unreadOnly: false,           // Only watch unread messages (default: false)
+        excludeOwnMessages: true,    // Exclude your own messages (default: true)
+        initialLookbackMs: 10000     // Initial lookback time in ms (default: 10000)
+                                     // Set to 0 to only process new messages
+                                     // Note: May cause duplicate processing if watcher restarts frequently
+    }
 })
 ```
+
+**Advanced Options:**
+
+- **`initialLookbackMs`**: Controls how far back the watcher looks when it first starts
+  - Default: `10000` (10 seconds) - catches messages sent just before watcher starts
+  - Set to `0` - only process messages sent after watcher starts (no lookback)
+  - Set to `5000` - lookback 5 seconds
+  - **Warning**: If you frequently restart the watcher, this may cause duplicate message processing
 
 ### Error Handling
 
@@ -402,11 +523,19 @@ try {
 
 Check the `examples/` directory for complete examples:
 
-- **[send-hello-world.ts](./examples/send-hello-world.ts)** - Basic message sending
-- **[send-network-image.ts](./examples/send-network-image.ts)** - Send images from URLs
-- **[send-files.ts](./examples/send-files.ts)** - Send files (PDF, CSV, VCF contact cards)
-- **[auto-reply.ts](./examples/auto-reply.ts)** - Auto-reply bot with chain API
-- **[advanced.ts](./examples/advanced.ts)** - Advanced features showcase
+- **[01-send-text.ts](./examples/01-send-text.ts)** - Basic text message
+- **[02-send-image.ts](./examples/02-send-image.ts)** - Send images
+- **[03-send-file.ts](./examples/03-send-file.ts)** - Send files
+- **[04-send-group.ts](./examples/04-send-group.ts)** - Send to group chat
+- **[05-query-messages.ts](./examples/05-query-messages.ts)** - Query messages
+- **[06-list-chats.ts](./examples/06-list-chats.ts)** - List all chats
+- **[07-watch-messages.ts](./examples/07-watch-messages.ts)** - Watch for new messages
+- **[08-auto-reply.ts](./examples/08-auto-reply.ts)** - Auto-reply bot
+- **[09-batch-send.ts](./examples/09-batch-send.ts)** - Batch sending
+- **[10-get-sent-message.ts](./examples/10-get-sent-message.ts)** - Get sent message immediately
+- **[11-plugin.ts](./examples/11-plugin.ts)** - Custom plugin
+- **[12-error-handling.ts](./examples/12-error-handling.ts)** - Error handling
+- **[13-watch-own-messages.ts](./examples/13-watch-own-messages.ts)** - Watch own messages
 
 ## Development
 
@@ -457,7 +586,7 @@ bun run type-check
 
 - **Automatically excludes your own messages** (set `excludeOwnMessages: false` to include them)
 - Works in Do Not Disturb mode (timestamp-based detection)
-- `onNewMessage` receives all messages (DMs and groups); `onGroupMessage` receives only group chats. Use `message.isGroupChat` to branch if needed.
+- Use `onMessage` for all messages, `onDirectMessage` for DMs only, or `onGroupMessage` for groups only
 
 ### Supported File Types
 
@@ -486,17 +615,33 @@ The SDK supports sending any file type that macOS Messages app accepts, includin
 ### Main Methods
 
 - `getMessages(filter?)` - Query messages with optional filters
-- `getUnreadMessages()` - Get unread messages grouped by sender
-- `listChats(limit?)` - List chats with `{ chatId, displayName, lastMessageAt, isGroup }`
-- `send(to, content)` - Send text, images, and/or files
-- `sendFile(to, filePath, text?)` - Send a single file
-- `sendFiles(to, filePaths, text?)` - Send multiple files
+- `getUnreadMessages()` - Get unread messages with statistics (total, senderCount, groups)
+- `listChats(options?)` - List chats with filtering/sorting (type, hasUnread, sortBy, search, limit)
+- `send(to, content)` - Send text, images, and/or files (returns SendResult with optional message)
+- `sendFile(to, filePath, text?)` - Send a single file (supports recipient or chatId)
+- `sendFiles(to, filePaths, text?)` - Send multiple files (supports recipient or chatId)
 - `sendBatch(messages)` - Send multiple messages concurrently
 - `message(msg)` - Create message processing chain
 - `startWatching(events?)` - Start monitoring new messages
 - `stopWatching()` - Stop monitoring
 - `use(plugin)` - Register plugin
 - `close()` - Close SDK and release resources
+
+### SendResult
+
+```typescript
+interface SendResult {
+    sentAt: Date                // When message was sent
+    message?: Message           // The sent message (only if watcher is running)
+}
+```
+
+**Note**: To get the `message` field populated, you must start the watcher before sending:
+```typescript
+await sdk.startWatching()
+const result = await sdk.send('+1234567890', 'Hello')
+// result.message will be available within ~2 seconds
+```
 
 ### Message Object
 
@@ -505,15 +650,36 @@ Each message object includes:
 ```typescript
 interface Message {
     id: string              // Message ID
+    guid: string            // Globally unique identifier
     text: string | null     // Message text content
     sender: string          // Sender (phone/email)
+    senderName: string | null  // Sender display name
     chatId: string          // Chat identifier
     isGroupChat: boolean    // Whether this is a group chat message
     isFromMe: boolean       // Whether sent by current user
     isRead: boolean         // Read status
     service: ServiceType    // 'iMessage' | 'SMS' | 'RCS'
-    attachments: Attachment[]  // File attachments
+    attachments: readonly Attachment[]  // File attachments
     date: Date              // Message timestamp
+}
+```
+
+### Query Results
+
+```typescript
+interface MessageQueryResult {
+    messages: readonly Message[]  // Message list
+    total: number                  // Total count
+    unreadCount: number            // Unread count
+}
+
+interface UnreadMessagesResult {
+    groups: Array<{                // Messages grouped by sender
+        sender: string
+        messages: readonly Message[]
+    }>
+    total: number                  // Total unread messages
+    senderCount: number            // Number of unique senders
 }
 ```
 
@@ -521,13 +687,17 @@ interface Message {
 
 ```typescript
 interface WatcherEvents {
-    onNewMessage?: (message: Message) => void | Promise<void>
-    onGroupMessage?: (message: Message) => void | Promise<void>
+    onMessage?: (message: Message) => void | Promise<void>        // All messages
+    onDirectMessage?: (message: Message) => void | Promise<void> // DMs only
+    onGroupMessage?: (message: Message) => void | Promise<void>  // Groups only
     onError?: (error: Error) => void
 }
 ```
 
-Note: `onNewMessage` fires for every incoming message (both DM and group). If you only want group processing, use `onGroupMessage` or check `message.isGroupChat` inside `onNewMessage`.
+**Callback execution order:**
+1. `onMessage` - fires for all messages (if defined)
+2. `onDirectMessage` or `onGroupMessage` - fires based on message type
+3. Webhook notification (if configured)
 
 For full TypeScript definitions, see the [types](./src/types) directory.
 

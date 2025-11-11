@@ -12,7 +12,8 @@
  *
  * // Get unread messages
  * const unread = await sdk.getUnreadMessages()
- * for (const { sender, messages } of unread) {
+ * console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+ * for (const { sender, messages } of unread.groups) {
  *   console.log(`${sender}: ${messages.length} messages`)
  * }
  *
@@ -24,7 +25,7 @@
  *
  * // Chain message processing
  * await sdk.startWatching({
- *   onNewMessage: async (msg: Message) => {
+ *   onDirectMessage: async (msg: Message) => {
  *     await sdk.message(msg)
  *       .ifFromOthers()
  *       .matchText(/hello/i)
@@ -46,6 +47,7 @@ export {
     WebhookError,
 } from './core/errors'
 export { IMessageSDK } from './core/sdk'
+export type { SendOptions, SendResult, SendToGroupOptions } from './core/sender'
 // Watcher types
 export type { WatcherEvents } from './core/watcher'
 export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
@@ -69,11 +71,25 @@ export type {
 export type {
     Attachment,
     ChatSummary,
+    ListChatsOptions,
     Message,
     MessageFilter,
     MessageQueryResult,
-    SendResult,
     ServiceType,
+    UnreadMessagesResult,
 } from './types/message'
 
 export { asRecipient, isMacOS, requireMacOS } from './utils/platform'
+
+// Attachment helpers
+export {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentExtension,
+    getAttachmentMetadata,
+    getAttachmentSize,
+    isAudioAttachment,
+    isImageAttachment,
+    isVideoAttachment,
+    readAttachment,
+} from './helpers/attachment'

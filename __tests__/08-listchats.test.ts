@@ -71,11 +71,32 @@ describe('listChats', () => {
 
         expect(dm!.lastMessageAt).not.toBeNull()
         expect(group!.lastMessageAt).not.toBeNull()
+
+        // Check unreadCount
+        expect(dm!.unreadCount).toBe(1)
+        expect(group!.unreadCount).toBe(1)
     })
 
     it('respects limit parameter', async () => {
         const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
         const chatsLimited = await sdk.listChats(1)
         expect(chatsLimited.length).toBe(1)
+    })
+
+    it('filters by type', async () => {
+        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
+
+        const groups = await sdk.listChats({ type: 'group' })
+        expect(groups.every((c) => c.isGroup)).toBe(true)
+
+        const dms = await sdk.listChats({ type: 'dm' })
+        expect(dms.every((c) => !c.isGroup)).toBe(true)
+    })
+
+    it('filters by unread status', async () => {
+        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
+
+        const unread = await sdk.listChats({ hasUnread: true })
+        expect(unread.every((c) => c.unreadCount > 0)).toBe(true)
     })
 })

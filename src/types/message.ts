@@ -147,6 +147,11 @@ export interface MessageFilter {
     /** Only query messages after this time */
     readonly since?: Date
 
+    // ===== Search filter =====
+
+    /** Search message text content (case-insensitive) */
+    readonly search?: string
+
     // ===== Limit control =====
 
     /** Limit number of results */
@@ -174,16 +179,47 @@ export interface MessageQueryResult {
 // ==================== Send result ====================
 
 /**
- * Send result
+ * Unread messages result
  *
- * Represents successful message sending result
+ * Contains unread messages grouped by sender with statistics
  */
-export interface SendResult {
-    /** Message sent time */
-    readonly sentAt: Date
+export interface UnreadMessagesResult {
+    /** Messages grouped by sender */
+    readonly groups: ReadonlyArray<{
+        readonly sender: string
+        readonly messages: readonly Message[]
+    }>
+
+    /** Total number of unread messages */
+    readonly total: number
+
+    /** Number of unique senders */
+    readonly senderCount: number
 }
 
+// SendResult moved to src/core/sender.ts to include message field
+
 // ==================== Chat Summary ====================
+
+/**
+ * Options for listing chats
+ */
+export interface ListChatsOptions {
+    /** Maximum number of chats to return */
+    limit?: number
+
+    /** Filter by chat type */
+    type?: 'all' | 'group' | 'dm'
+
+    /** Only return chats with unread messages */
+    hasUnread?: boolean
+
+    /** Sort order */
+    sortBy?: 'recent' | 'name'
+
+    /** Search by display name (case-insensitive) */
+    search?: string
+}
 
 /**
  * Chat summary information
@@ -202,4 +238,7 @@ export interface ChatSummary {
 
     /** Whether this chat is a group */
     readonly isGroup: boolean
+
+    /** Number of unread messages in this chat */
+    readonly unreadCount: number
 }

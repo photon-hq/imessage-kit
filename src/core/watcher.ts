@@ -7,15 +7,18 @@ import type { WebhookConfig } from '../types/config'
 import type { Message } from '../types/message'
 import type { IMessageDatabase } from './database'
 import { WebhookError } from './errors'
+import type { OutgoingMessageManager } from './outgoing-manager'
 
 /** Message callback */
 export type MessageCallback = (message: Message) => void | Promise<void>
 
 /** Watcher event callbacks */
 export interface WatcherEvents {
-    /** Triggered when new 1-on-1 message arrives */
-    onNewMessage?: MessageCallback
-    /** Triggered when new group chat message arrives (optional, ignored by default) */
+    /** Triggered when any new message arrives (DM or group) */
+    onMessage?: MessageCallback
+    /** Triggered when new direct message arrives */
+    onDirectMessage?: MessageCallback
+    /** Triggered when new group message arrives */
     onGroupMessage?: MessageCallback
     /** Triggered when error occurs */
     onError?: (error: Error) => void
@@ -44,9 +47,14 @@ export class MessageWatcher {
         private webhookConfig: WebhookConfig | null,
         private events: WatcherEvents = {},
         private pluginManager?: PluginManager,
-        private debug = false
+        private debug = false,
+        private outgoingManager?: OutgoingMessageManager,
+        initialLookbackMs = 10000
     ) {
-        this.lastCheckTime = new Date()
+        // Start from initialLookbackMs ago to catch recently sent messages
+        // Default 10 seconds helps catch messages sent just before watcher starts
+        // Note: This may cause duplicate processing if watcher is frequently restarted
+        this.lastCheckTime = new Date(Date.now() - initialLookbackMs)
     }
 
     /**
@@ -105,12 +113,25 @@ export class MessageWatcher {
 
             const { messages } = await this.database.getMessages({
                 since,
+                excludeOwnMessages: false, // Always fetch own messages for outgoing resolution
             })
 
             this.lastCheckTime = checkStart
 
             /** Filter out new messages */
             let newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
+
+            /** Try to resolve outgoing messages BEFORE filtering (critical for reliable send) */
+            if (this.outgoingManager) {
+                for (const msg of newMessages) {
+                    if (msg.isFromMe) {
+                        const matched = this.outgoingManager.tryResolve(msg)
+                        if (this.debug && matched) {
+                            console.log(`[Watcher] Resolved outgoing message: ${msg.id}`)
+                        }
+                    }
+                }
+            }
 
             /** Filter by unread status if configured */
             if (this.unreadOnly) {
@@ -142,6 +163,11 @@ export class MessageWatcher {
                     }
                 }
             }
+
+            /** Cleanup resolved outgoing message promises */
+            if (this.outgoingManager) {
+                this.outgoingManager.cleanup()
+            }
         } catch (error) {
             this.handleError(error)
         } finally {
@@ -156,14 +182,17 @@ export class MessageWatcher {
      */
     private async handleNewMessage(message: Message) {
         try {
-            /** Call plugin's onNewMessage hook (always, for all messages) */
+            /** Call plugin's onNewMessage hook */
             await this.pluginManager?.callHookForAll('onNewMessage', message)
 
-            /** Dispatch to appropriate event callback based on message type */
+            /** Call onMessage for all messages */
+            await this.events.onMessage?.(message)
+
+            /** Dispatch to specific callbacks based on message type */
             if (message.isGroupChat) {
                 await this.events.onGroupMessage?.(message)
             } else {
-                await this.events.onNewMessage?.(message)
+                await this.events.onDirectMessage?.(message)
             }
 
             /** Send webhook notification */
