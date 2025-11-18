@@ -3,7 +3,7 @@
     "version": "2.0.0",
     "description": "A type-safe, elegant iMessage SDK for macOS with zero dependencies",
     "author": "GreatSomething",
-    "license": "SSPL-1.0",
+    "license": "MIT",
     "repository": {
         "type": "git",
         "url": "https://github.com/photon-hq/imessage-kit.git"
@@ -62,6 +62,9 @@
     },
     "optionalDependencies": {
         "better-sqlite3": "^11.0.0"
+    },
+    "overrides": {
+        "glob": "^11.1.0"
     },
     "engines": {
         "node": ">=18.0.0"
