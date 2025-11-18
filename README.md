@@ -10,7 +10,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@photon-ai/imessage-kit.svg)](https://www.npmjs.com/package/@photon-ai/imessage-kit)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/license-SSPL-blue.svg)](./LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/bZd4CMd2H5)
 
 It lets you **read**, **send**, and **automate** iMessage conversations directly from Node.js or Bun.
@@ -703,24 +703,7 @@ For full TypeScript definitions, see the [types](./src/types) directory.
 
 ## License
 
-This project is licensed under the [Server Side Public License v1 (SSPL)](./LICENSE) with additional restrictions.
-
-### Prohibited Use
-
-**You may NOT use this software to create competing products or services**, including but not limited to:
-- iMessage/SMS/RCS messaging SDKs or APIs
-- Messaging automation platforms
-- Similar messaging libraries for macOS
-
-### Permitted Use
-
-You MAY use this software for:
-- Internal business operations and automation
-- Personal projects and non-commercial applications  
-- Educational and research purposes
-- Integration where messaging is not the core feature
-
-For the complete license terms, see the [LICENSE](./LICENSE) file.
+This project is licensed under the [MIT License](./LICENSE).
 
 ---
 
