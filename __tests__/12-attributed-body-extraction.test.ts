@@ -6,11 +6,12 @@
  * 2. Short messages filtered by minimum length requirement
  * 3. Binary plist length prefixes (+digit) appearing in output
  */
-import { describe, test, expect } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 
 /** Simulates the fixed extraction logic */
 function extractFixed(bufferStr: string): string | null {
-    const excluded = /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSDictionary|NSNumber|NSValue|streamtyped|__kIM\w+|NS\.\w+)$/i
+    const excluded =
+        /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSDictionary|NSNumber|NSValue|streamtyped|__kIM\w+|NS\.\w+)$/i
 
     const matches = bufferStr.match(/[\x20-\x7E\u2018-\u201F\u4e00-\u9fff]+/g)
     if (!matches) return null
@@ -26,15 +27,14 @@ function extractFixed(bufferStr: string): string | null {
 
 /** Simulates the buggy extraction logic */
 function extractBuggy(bufferStr: string): string | null {
-    const excluded = /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSDictionary|NSNumber|NSValue|streamtyped|__kIM\w+|NS\.\w+)$/i
+    const excluded =
+        /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSDictionary|NSNumber|NSValue|streamtyped|__kIM\w+|NS\.\w+)$/i
 
     // BUG: Missing smart quotes, requires 5+ chars
     const matches = bufferStr.match(/[\x20-\x7E\u4e00-\u9fff]{5,}/g)
     if (!matches) return null
 
-    const candidates = matches
-        .filter((m) => !excluded.test(m) && m.length > 5)
-        .sort((a, b) => b.length - a.length)
+    const candidates = matches.filter((m) => !excluded.test(m) && m.length > 5).sort((a, b) => b.length - a.length)
 
     if (!candidates.length) return null
     // BUG: Only removes +"
@@ -102,4 +102,3 @@ describe('attributedBody extraction', () => {
         })
     })
 })
-
