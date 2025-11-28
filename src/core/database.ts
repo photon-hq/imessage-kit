@@ -467,7 +467,7 @@ export class IMessageDatabase {
             // Exclude common plist keywords like "NSAttributedString", "NSDictionary", etc.
             const excludedPatterns =
                 /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSMutableString|NSDictionary|NSNumber|NSValue|streamtyped|__kIMMessagePartAttributeName|__kIMPhoneNumberAttributeName|PhoneNumber|NS\.rangeval|locationZNS\.special)$/i
-            const readableMatches = bufferStr.match(/[\x20-\x7E\u4e00-\u9fff]{5,}/g)
+            const readableMatches = bufferStr.match(/[\x20-\x7E\u2018-\u201F\u4e00-\u9fff]+/g)
             if (readableMatches) {
                 // Filter out plist keywords and find text that looks like actual message content
                 const messageCandidates = readableMatches
@@ -482,8 +482,8 @@ export class IMessageDatabase {
                         if (/^__kIM/.test(match)) return false
                         // Exclude plist binary format markers like "$versionY$archiverT$topX$objects"
                         if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
-                        // Prefer text that contains Chinese characters or looks like actual content
-                        return match.length > 5
+                        // Accept text with at least 1 character
+                        return match.length >= 1
                     })
                     .map((match) => ({
                         text: match,
@@ -502,7 +502,7 @@ export class IMessageDatabase {
                     const bestCandidate = messageCandidates[0]!
                     // Clean up common prefixes/suffixes that might be plist artifacts
                     return bestCandidate.text
-                        .replace(/^\+"/, '') // Remove leading +"
+                        .replace(/^\+./, '') // Remove leading + followed by any char (bplist length marker)
                         .replace(/"$/, '') // Remove trailing "
                         .trim()
                 }
@@ -539,7 +539,7 @@ export class IMessageDatabase {
                             // Decode XML entities
                             const decoded = this.decodeXmlEntities(text)
                             // Exclude plist keywords
-                            return decoded.length > 5 && !excludedPatterns.test(decoded)
+                            return decoded.length >= 1 && !excludedPatterns.test(decoded)
                         })
                         .sort((a, b) => b.length - a.length) // Sort by length, longest first
 
