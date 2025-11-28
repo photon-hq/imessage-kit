@@ -508,7 +508,7 @@ export class IMessageDatabase {
                     .filter((match) => {
                         if (excludedPatterns.test(match)) return false
                         if (/^[\[\(\)\]\*,\-:X]+$/.test(match)) return false
-                        if (/NS\.\w+/.test(match)) return false
+                        if (/^NS\.\w+/.test(match)) return false
                         if (/__kIM/.test(match)) return false
                         if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
                         return match.length >= 1
@@ -529,7 +529,7 @@ export class IMessageDatabase {
                         .replace(/^\+\+./, '') // Remove ++ prefix (plist marker like ++3)
                         .replace(/^\+[\*@#!]/, '') // Remove +* +@ +# +! prefix
                         .replace(/^\+(\d)(?=[^\d\s])/, '') // Remove +N only if followed by non-digit non-space (e.g., +3hello → hello)
-                        .replace(/\[PhoneNumber.*$/, '') // Remove trailing plist artifacts
+                        .replace(/\[PhoneNumber\s+.*\]$/, '') // Remove trailing plist artifacts
                         .replace(/"$/, '')
                         .trim()
                 }
