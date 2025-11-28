@@ -450,7 +450,6 @@ export class IMessageDatabase {
         if (!attributedBody) return null
 
         try {
-            // attributedBody is typically a Buffer in Node.js or Uint8Array in Bun
             let buffer: Buffer | Uint8Array
             if (Buffer.isBuffer(attributedBody)) {
                 buffer = attributedBody
@@ -460,56 +459,10 @@ export class IMessageDatabase {
                 return null
             }
 
-            // First, try to extract text directly from buffer (faster fallback)
-            // NSAttributedString plist often contains the actual text as readable strings
-            const bufferStr = buffer.toString('utf8')
-            // Look for longer readable text patterns (at least 5 characters) that are likely message content
-            // Exclude common plist keywords like "NSAttributedString", "NSDictionary", etc.
             const excludedPatterns =
-                /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSMutableString|NSDictionary|NSNumber|NSValue|streamtyped|__kIMMessagePartAttributeName|__kIMPhoneNumberAttributeName|PhoneNumber|NS\.rangeval|locationZNS\.special)$/i
-            const readableMatches = bufferStr.match(/[\x20-\x7E\u2018-\u201F\u4e00-\u9fff]+/g)
-            if (readableMatches) {
-                // Filter out plist keywords and find text that looks like actual message content
-                const messageCandidates = readableMatches
-                    .filter((match) => {
-                        // Exclude plist keywords
-                        if (excludedPatterns.test(match)) return false
-                        // Exclude patterns that look like metadata (contain brackets, colons in wrong places, etc.)
-                        if (/^[\[\(\)\]\*,\-:X]+$/.test(match)) return false
-                        // Exclude NS object property patterns like "NS.rangeval.locationZNS.special"
-                        if (/^NS\.\w+/.test(match)) return false
-                        // Exclude attribute names starting with __kIM
-                        if (/^__kIM/.test(match)) return false
-                        // Exclude plist binary format markers like "$versionY$archiverT$topX$objects"
-                        if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
-                        // Accept text with at least 1 character
-                        return match.length >= 1
-                    })
-                    .map((match) => ({
-                        text: match,
-                        // Score: higher for Chinese characters, longer text, and content-like patterns
-                        score:
-                            (match.match(/[\u4e00-\u9fff]/g)?.length || 0) * 10 +
-                            match.length +
-                            (match.match(/[a-zA-Z]/) ? 5 : 0) -
-                            (match.match(/[\[\(\)\]\*,\-:X]/g)?.length || 0) * 5 -
-                            (match.match(/^__kIM|^NS\.|\$version|\$archiver|\$top|\$objects|\$class/) ? 100 : 0), // Heavily penalize attribute names and plist markers
-                    }))
-                    .sort((a, b) => b.score - a.score) // Sort by score, highest first
+                /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSMutableString|NSDictionary|NSNumber|NSValue|NSKeyedArchiver|DDScannerResult|streamtyped|__kIMMessagePartAttributeName|__kIMPhoneNumberAttributeName|PhoneNumber|NS\.rangeval|locationZNS\.special)$/i
 
-                if (messageCandidates.length > 0) {
-                    // Return the highest-scoring candidate that's likely the actual message
-                    const bestCandidate = messageCandidates[0]!
-                    // Clean up common prefixes/suffixes that might be plist artifacts
-                    return bestCandidate.text
-                        .replace(/^\+./, '') // Remove leading + followed by any char (bplist length marker)
-                        .replace(/"$/, '') // Remove trailing "
-                        .trim()
-                }
-            }
-
-            // If direct extraction didn't work, try plutil (macOS built-in tool)
-            // Write buffer to a temporary file and convert plist to XML
+            // Priority 1: plutil for accurate plist parsing (clean text, no binary artifacts)
             const tempFile = join(
                 tmpdir(),
                 `imsg_attributedBody_${Date.now()}_${Math.random().toString(36).substring(7)}.plist`
@@ -517,48 +470,69 @@ export class IMessageDatabase {
 
             try {
                 await writeFile(tempFile, buffer)
-
-                // Convert binary plist to XML using plutil
                 const { stdout } = await execAsync(`plutil -convert xml1 -o - "${tempFile}"`, {
                     timeout: 5000,
-                    maxBuffer: 1024 * 1024, // 1MB buffer
+                    maxBuffer: 1024 * 1024,
                 })
 
-                // Extract string content from NSAttributedString plist
-                // Look for <string> tags in the XML
                 const stringMatches = stdout.match(/<string>([\s\S]*?)<\/string>/g)
                 if (stringMatches && stringMatches.length > 0) {
-                    // Filter out plist keywords and find the actual message text
                     const textCandidates = stringMatches
-                        .map((match) => {
-                            const textMatch = match.match(/<string>([\s\S]*?)<\/string>/)
-                            return textMatch?.[1]
-                        })
+                        .map((match) => match.match(/<string>([\s\S]*?)<\/string>/)?.[1])
                         .filter((text): text is string => {
                             if (!text) return false
-                            // Decode XML entities
                             const decoded = this.decodeXmlEntities(text)
-                            // Exclude plist keywords
                             return decoded.length >= 1 && !excludedPatterns.test(decoded)
                         })
-                        .sort((a, b) => b.length - a.length) // Sort by length, longest first
+                        .sort((a, b) => b.length - a.length)
 
                     if (textCandidates.length > 0) {
-                        // Decode XML entities for the selected candidate
                         return this.decodeXmlEntities(textCandidates[0]!)
                     }
                 }
+            } catch {
+                // plutil failed, fall through to buffer extraction
             } finally {
-                // Clean up temp file
                 try {
                     await unlink(tempFile)
-                } catch {
-                    // Ignore cleanup errors
+                } catch {}
+            }
+
+            // Priority 2: Direct buffer extraction (fallback)
+            const bufferStr = buffer.toString('utf8')
+            const readableMatches = bufferStr.match(/[\x20-\x7E\u2018-\u201F\u2026\u2014\u2013\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g)
+            if (readableMatches) {
+                const messageCandidates = readableMatches
+                    .filter((match) => {
+                        if (excludedPatterns.test(match)) return false
+                        if (/^[\[\(\)\]\*,\-:X]+$/.test(match)) return false
+                        if (/NS\.\w+/.test(match)) return false
+                        if (/__kIM/.test(match)) return false
+                        if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
+                        return match.length >= 1
+                    })
+                    .map((match) => ({
+                        text: match,
+                        score:
+                            (match.match(/[\u4e00-\u9fff]/g)?.length || 0) * 10 +
+                            match.length +
+                            (match.match(/[a-zA-Z]/) ? 5 : 0) -
+                            (match.match(/[\[\(\)\]\*,\-:X]/g)?.length || 0) * 5 -
+                            (match.match(/^__kIM|^NS\.|\$version|\$archiver|\$top|\$objects|\$class/) ? 100 : 0),
+                    }))
+                    .sort((a, b) => b.score - a.score)
+
+                if (messageCandidates.length > 0) {
+                    return messageCandidates[0]!.text
+                        .replace(/^\+\+./, '') // Remove ++ prefix (plist marker like ++3)
+                        .replace(/^\+[\*@#!]/, '') // Remove +* +@ +# +! prefix
+                        .replace(/^\+(\d)(?=[^\d\s])/, '') // Remove +N only if followed by non-digit non-space (e.g., +3hello → hello)
+                        .replace(/\[PhoneNumber.*$/, '') // Remove trailing plist artifacts
+                        .replace(/"$/, '')
+                        .trim()
                 }
             }
-        } catch (error) {
-            // If all methods fail, return null
-        }
+        } catch {}
 
         return null
     }
