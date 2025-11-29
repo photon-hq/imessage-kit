@@ -81,6 +81,22 @@ export type {
 
 export { asRecipient, isMacOS, requireMacOS } from './utils/platform'
 
+// Message scheduler
+export {
+    MessageScheduler,
+    type RecurrenceInterval,
+    type RecurringMessage,
+    type RecurringScheduleOptions,
+    type ScheduledMessage,
+    type ScheduledMessageStatus,
+    type ScheduleOptions,
+    type SchedulerConfig,
+    type SchedulerEvents,
+} from './utils/scheduler'
+
+// Smart reminders (user-friendly scheduler wrapper)
+export { Reminders, type Reminder, type ReminderOptions } from './utils/reminders'
+
 // Attachment helpers
 export {
     attachmentExists,
