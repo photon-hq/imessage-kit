@@ -72,5 +72,8 @@
     "os": [
         "darwin"
     ],
-    "sideEffects": false
+    "sideEffects": false,
+    "dependencies": {
+        "node-typedstream": "^1.4.1"
+    }
 }

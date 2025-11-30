@@ -7,15 +7,11 @@
  * - Support both Bun and Node.js runtimes
  */
 
-import { exec } from 'node:child_process'
-import { unlink, writeFile } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
+import { NSAttributedString, Unarchiver } from 'node-typedstream'
 import type { Attachment, ChatSummary, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
 import { DatabaseError } from './errors'
-
-const execAsync = promisify(exec)
 
 /** Safe type conversion helper functions */
 const str = (v: unknown, fallback = ''): string => (v == null ? fallback : String(v))
@@ -428,29 +424,16 @@ export class IMessageDatabase {
     }
 
     /**
-     * Decode XML entities in a string
-     * @param text Text with XML entities
-     * @returns Decoded text
-     */
-    private decodeXmlEntities(text: string): string {
-        return text
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-    }
-
-    /**
-     * Extract text from attributedBody (binary plist format)
-     * @param attributedBody Binary plist data
+     * Extract text from attributedBody using node-typedstream
+     * Uses proper NSKeyedArchiver deserialization for accurate text extraction
+     * @param attributedBody Binary plist data (NSKeyedArchiver format)
      * @returns Extracted text or null if extraction fails
      */
-    private async extractTextFromAttributedBody(attributedBody: unknown): Promise<string | null> {
+    private extractTextFromAttributedBody(attributedBody: unknown): string | null {
         if (!attributedBody) return null
 
         try {
-            let buffer: Buffer | Uint8Array
+            let buffer: Buffer
             if (Buffer.isBuffer(attributedBody)) {
                 buffer = attributedBody
             } else if (attributedBody instanceof Uint8Array) {
@@ -459,82 +442,34 @@ export class IMessageDatabase {
                 return null
             }
 
-            const excludedPatterns =
-                /^(NSAttributedString|NSMutableAttributedString|NSObject|NSString|NSMutableString|NSDictionary|NSNumber|NSValue|NSKeyedArchiver|DDScannerResult|streamtyped|__kIMMessagePartAttributeName|__kIMPhoneNumberAttributeName|PhoneNumber|NS\.rangeval|locationZNS\.special)$/i
+            if (buffer.length === 0) return null
 
-            // Priority 1: plutil for accurate plist parsing (clean text, no binary artifacts)
-            const tempFile = join(
-                tmpdir(),
-                `imsg_attributedBody_${Date.now()}_${Math.random().toString(36).substring(7)}.plist`
-            )
+            // Use node-typedstream to properly decode NSKeyedArchiver format
+            const decoded = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeAll()
 
-            try {
-                await writeFile(tempFile, buffer)
-                const { stdout } = await execAsync(`plutil -convert xml1 -o - "${tempFile}"`, {
-                    timeout: 5000,
-                    maxBuffer: 1024 * 1024,
-                })
+            if (!decoded) return null
 
-                const stringMatches = stdout.match(/<string>([\s\S]*?)<\/string>/g)
-                if (stringMatches && stringMatches.length > 0) {
-                    const textCandidates = stringMatches
-                        .map((match) => match.match(/<string>([\s\S]*?)<\/string>/)?.[1])
-                        .filter((text): text is string => {
-                            if (!text) return false
-                            const decoded = this.decodeXmlEntities(text)
-                            return decoded.length >= 1 && !excludedPatterns.test(decoded)
-                        })
-                        .sort((a, b) => b.length - a.length)
+            const items = Array.isArray(decoded) ? decoded : [decoded]
 
-                    if (textCandidates.length > 0) {
-                        return this.decodeXmlEntities(textCandidates[0]!)
+            // Extract text from NSAttributedString objects
+            for (const item of items) {
+                // Direct NSAttributedString
+                if (item instanceof NSAttributedString && item.string) {
+                    return item.string
+                }
+
+                // Nested in values array (common structure)
+                if (item?.values && Array.isArray(item.values)) {
+                    for (const val of item.values) {
+                        if (val instanceof NSAttributedString && val.string) {
+                            return val.string
+                        }
                     }
                 }
-            } catch {
-                // plutil failed, fall through to buffer extraction
-            } finally {
-                try {
-                    await unlink(tempFile)
-                } catch {}
             }
-
-            // Priority 2: Direct buffer extraction (fallback)
-            const bufferStr = buffer.toString('utf8')
-            const readableMatches = bufferStr.match(
-                /[\x20-\x7E\u2018-\u201F\u2026\u2014\u2013\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g
-            )
-            if (readableMatches) {
-                const messageCandidates = readableMatches
-                    .filter((match) => {
-                        if (excludedPatterns.test(match)) return false
-                        if (/^[\[\(\)\]\*,\-:X]+$/.test(match)) return false
-                        if (/^NS\.\w+/.test(match)) return false
-                        if (/__kIM/.test(match)) return false
-                        if (/\$version|\$archiver|\$top|\$objects|\$class/.test(match)) return false
-                        return match.length >= 1
-                    })
-                    .map((match) => ({
-                        text: match,
-                        score:
-                            (match.match(/[\u4e00-\u9fff]/g)?.length || 0) * 10 +
-                            match.length +
-                            (match.match(/[a-zA-Z]/) ? 5 : 0) -
-                            (match.match(/[\[\(\)\]\*,\-:X]/g)?.length || 0) * 5 -
-                            (match.match(/^__kIM|^NS\.|\$version|\$archiver|\$top|\$objects|\$class/) ? 100 : 0),
-                    }))
-                    .sort((a, b) => b.score - a.score)
-
-                if (messageCandidates.length > 0) {
-                    return messageCandidates[0]!.text
-                        .replace(/^\+\+./, '') // Remove ++ prefix (plist marker like ++3)
-                        .replace(/^\+[\*@#!]/, '') // Remove +* +@ +# +! prefix
-                        .replace(/^\+(\d)(?=[^\d\s])/, '') // Remove +N only if followed by non-digit non-space (e.g., +3hello → hello)
-                        .replace(/\[PhoneNumber\s+.*\]$/, '') // Remove trailing plist artifacts
-                        .replace(/"$/, '')
-                        .trim()
-                }
-            }
-        } catch {}
+        } catch {
+            // Silently fail - attributedBody format may vary
+        }
 
         return null
     }
@@ -550,7 +485,7 @@ export class IMessageDatabase {
 
         // If text is null and attributedBody exists, try to extract from attributedBody
         if (!messageText && row.attributedBody) {
-            messageText = await this.extractTextFromAttributedBody(row.attributedBody)
+            messageText = this.extractTextFromAttributedBody(row.attributedBody)
         }
 
         return {
