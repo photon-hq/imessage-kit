@@ -633,5 +633,3 @@ describe('MessageScheduler', () => {
         })
     })
 })
-
-

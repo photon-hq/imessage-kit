@@ -26,6 +26,9 @@
 import type { IMessageSDK } from '../core/sdk'
 import { MessageScheduler, type SchedulerEvents } from './scheduler'
 
+/** Days of the week for parsing weekday expressions */
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
+
 export interface ReminderOptions {
     /** Optional custom ID */
     id?: string
@@ -125,10 +128,9 @@ function parseAtExpression(expression: string): Date {
         // "tomorrow 9am"
         targetDate.setDate(targetDate.getDate() + 1)
         timeStr = parts.slice(1).join(' ')
-    } else if (['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].includes(parts[0]!)) {
+    } else if (WEEKDAYS.includes(parts[0] as (typeof WEEKDAYS)[number])) {
         // "friday 2pm"
-        const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-        const targetDay = days.indexOf(parts[0]!)
+        const targetDay = WEEKDAYS.indexOf(parts[0] as (typeof WEEKDAYS)[number])
         const currentDay = now.getDay()
         const rawDiff = targetDay - currentDay
         const daysUntil = rawDiff <= 0 ? rawDiff + 7 : rawDiff
@@ -157,10 +159,7 @@ export class Reminders {
     private readonly scheduler: MessageScheduler
     private readonly reminders: Map<string, Reminder> = new Map()
 
-    constructor(
-        sdk: IMessageSDK,
-        events?: SchedulerEvents
-    ) {
+    constructor(sdk: IMessageSDK, events?: SchedulerEvents) {
         this.scheduler = new MessageScheduler(
             sdk,
             { checkInterval: 1000, debug: false },
@@ -276,7 +275,7 @@ export class Reminders {
      */
     list(): Reminder[] {
         return Array.from(this.reminders.values())
-            .filter(r => this.scheduler.get(r.id)?.status === 'pending')
+            .filter((r) => this.scheduler.get(r.id)?.status === 'pending')
             .sort((a, b) => a.scheduledFor.getTime() - b.scheduledFor.getTime())
     }
 
@@ -284,7 +283,13 @@ export class Reminders {
      * Get count of pending reminders
      */
     count(): number {
-        return this.list().length
+        let count = 0
+        for (const r of this.reminders.values()) {
+            if (this.scheduler.get(r.id)?.status === 'pending') {
+                count++
+            }
+        }
+        return count
     }
 
     /**

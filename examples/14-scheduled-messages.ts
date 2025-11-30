@@ -30,7 +30,7 @@ const scheduler = new MessageScheduler(
 // ============================================
 // Example 1: Schedule a message for 30 seconds from now
 // ============================================
-const recipient = 'pilot@photon.codes' // Replace with actual recipient
+const recipient = process.env.RECIPIENT || '+1234567890' // Set RECIPIENT env var or replace
 
 const reminder = scheduler.schedule({
     to: recipient,
