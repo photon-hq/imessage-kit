@@ -27,9 +27,11 @@ function extractTextFromAttributedBody(attributedBody: unknown): string | null {
 
         const decoded = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeAll()
 
-        if (!decoded || !Array.isArray(decoded)) return null
+        if (!decoded) return null
 
-        for (const item of decoded) {
+        const items = Array.isArray(decoded) ? decoded : [decoded]
+
+        for (const item of items) {
             if (item instanceof NSAttributedString && item.string) {
                 return item.string
             }
