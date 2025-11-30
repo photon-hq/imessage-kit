@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
  * 🎬 iMessage Kit - Scheduler Feature Demo
- * 
+ *
  * This demo showcases the MessageScheduler feature:
  * - Schedule messages for future delivery
  * - Recurring messages (daily, hourly, custom intervals)
  * - Cancel and reschedule on the fly
  * - Export/import for persistence
- * 
+ *
  * Run: bun run demo.ts
  */
 
@@ -46,7 +46,7 @@ const scheduler = new MessageScheduler(
     { checkInterval: 500, debug: false },
     {
         onSent: (msg, result) => {
-            console.log(`\n🎉 MESSAGE SENT!`)
+            console.log('\n🎉 MESSAGE SENT!')
             console.log(`   ID: ${msg.id}`)
             console.log(`   To: ${msg.to}`)
             console.log(`   Content: ${typeof msg.content === 'string' ? msg.content : msg.content.text}`)
@@ -80,7 +80,7 @@ const msg1 = scheduler.schedule({
     sendAt: sendTime1,
 })
 console.log(`   ✓ Scheduled "${msg1}" for ${sendTime1.toLocaleTimeString()}`)
-console.log(`   ⏱️  Sending in 10 seconds...\n`)
+console.log('   ⏱️  Sending in 10 seconds...\n')
 
 // ─────────────────────────────────────────────────────────────────────
 // Demo 2: Schedule another message for 20 seconds
@@ -97,7 +97,7 @@ const msg2 = scheduler.schedule({
     sendAt: sendTime2,
 })
 console.log(`   ✓ Scheduled "${msg2}" for ${sendTime2.toLocaleTimeString()}`)
-console.log(`   ⏱️  Sending in 20 seconds...\n`)
+console.log('   ⏱️  Sending in 20 seconds...\n')
 
 // ─────────────────────────────────────────────────────────────────────
 // Demo 3: Recurring message (every 15 seconds, 3 times)
@@ -119,7 +119,7 @@ const msg3 = scheduler.scheduleRecurring({
 console.log(`   ✓ Scheduled "${msg3}"`)
 console.log(`   📍 Starts: ${recurringStart.toLocaleTimeString()}`)
 console.log(`   🏁 Ends: ${recurringEnd.toLocaleTimeString()}`)
-console.log(`   🔁 Interval: every 15 seconds\n`)
+console.log('   🔁 Interval: every 15 seconds\n')
 
 // ─────────────────────────────────────────────────────────────────────
 // Show pending messages
@@ -142,7 +142,7 @@ console.log('💾 EXPORT FEATURE (for persistence)')
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
 const exported = scheduler.export()
 console.log(`   Exported ${exported.scheduled.length} one-time + ${exported.recurring.length} recurring messages`)
-console.log(`   This data can be saved to disk and restored later!\n`)
+console.log('   This data can be saved to disk and restored later!\n')
 
 // ─────────────────────────────────────────────────────────────────────
 // Wait for messages to send
@@ -183,5 +183,3 @@ process.on('SIGINT', async () => {
     await sdk.close()
     process.exit(0)
 })
-
-
