@@ -4,7 +4,7 @@
  * Tests for the MessageScheduler utility
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { IMessageSDK } from '../src/core/sdk'
 import type { SendResult } from '../src/core/sender'
 import {

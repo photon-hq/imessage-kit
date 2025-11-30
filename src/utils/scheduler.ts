@@ -175,6 +175,7 @@ export class MessageScheduler {
 
     private intervalHandle: ReturnType<typeof setInterval> | null = null
     private destroyed = false
+    private ticking = false
 
     constructor(sdk: IMessageSDK, config?: SchedulerConfig, events?: SchedulerEvents) {
         this.sdk = sdk
@@ -453,23 +454,34 @@ export class MessageScheduler {
      * Process scheduled messages
      */
     private async tick(): Promise<void> {
-        if (this.destroyed) return
+        if (this.destroyed || this.ticking) return
 
-        const now = new Date()
+        this.ticking = true
 
-        // Process one-time messages
-        for (const [id, msg] of this.scheduled) {
-            if (msg.status === 'pending' && msg.sendAt <= now) {
-                // Mark as sending immediately to prevent duplicate sends
-                msg.status = 'sent'
-                this.scheduled.delete(id)
+        try {
+            const now = new Date()
+
+            const dueScheduled: ScheduledMessage[] = []
+            for (const msg of this.scheduled.values()) {
+                if (msg.status === 'pending' && msg.sendAt <= now) {
+                    dueScheduled.push(msg)
+                }
+            }
+
+            const dueRecurring: RecurringMessage[] = []
+            for (const msg of this.recurring.values()) {
+                if (msg.status === 'pending' && msg.nextSendAt <= now) {
+                    dueRecurring.push(msg)
+                }
+            }
+
+            // Process one-time messages
+            for (const msg of dueScheduled) {
                 await this.sendMessage(msg)
             }
-        }
 
-        // Process recurring messages
-        for (const [id, msg] of this.recurring) {
-            if (msg.status === 'pending' && msg.nextSendAt <= now) {
+            // Process recurring messages
+            for (const msg of dueRecurring) {
                 // Calculate next time BEFORE sending to prevent race conditions
                 const nextTime = calculateNextSendTime(msg.nextSendAt, msg.interval)
 
@@ -482,13 +494,15 @@ export class MessageScheduler {
                 // Check if we should stop
                 if (msg.endAt && nextTime > msg.endAt) {
                     msg.status = 'sent'
-                    this.recurring.delete(id)
+                    this.recurring.delete(msg.id)
                     this.events.onComplete?.(msg)
                     if (this.config.debug) {
-                        console.log(`[Scheduler] Recurring message ${id} completed`)
+                        console.log(`[Scheduler] Recurring message ${msg.id} completed`)
                     }
                 }
             }
+        } finally {
+            this.ticking = false
         }
     }
 
@@ -504,6 +518,8 @@ export class MessageScheduler {
             const result = await this.sdk.send(msg.to, msg.content)
             msg.status = 'sent'
             msg.result = result
+
+            this.scheduled.delete(msg.id)
 
             this.events.onSent?.(msg, result)
         } catch (err) {
@@ -531,6 +547,7 @@ export class MessageScheduler {
             const result = await this.sdk.send(msg.to, msg.content)
             msg.sendCount++
             msg.result = result
+            msg.error = undefined
 
             this.events.onSent?.(msg, result)
         } catch (err) {

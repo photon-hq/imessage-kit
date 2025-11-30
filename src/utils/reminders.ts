@@ -51,7 +51,7 @@ function parseDuration(duration: string): number {
         throw new Error(`Invalid duration format: "${duration}". Use formats like "5 minutes", "2 hours", "1 day"`)
     }
 
-    const value = parseInt(match[1]!, 10)
+    const value = Number.parseInt(match[1]!, 10)
     const unit = match[2]!
 
     const multipliers: Record<string, number> = {
@@ -69,18 +69,35 @@ function parseDuration(duration: string): number {
  * Parse time expressions like "5pm", "17:30", "5:30pm"
  */
 function parseTime(timeStr: string): { hours: number; minutes: number } {
+    const trimmed = timeStr.trim()
+
     // Handle 24-hour format: "17:30"
-    const match24 = timeStr.match(/^(\d{1,2}):(\d{2})$/)
+    const match24 = trimmed.match(/^(\d{1,2}):(\d{2})$/)
     if (match24) {
-        return { hours: parseInt(match24[1]!, 10), minutes: parseInt(match24[2]!, 10) }
+        const hours = Number.parseInt(match24[1] ?? '', 10)
+        const minutes = Number.parseInt(match24[2] ?? '', 10)
+
+        if (Number.isNaN(hours) || Number.isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            throw new Error(
+                `Invalid time value: "${timeStr}". Hours must be between 0-23 and minutes between 0-59 for 24-hour format`
+            )
+        }
+
+        return { hours, minutes }
     }
 
     // Handle 12-hour format: "5pm", "5:30pm", "5:30 pm"
-    const match12 = timeStr.toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/)
+    const match12 = trimmed.toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/)
     if (match12) {
-        let hours = parseInt(match12[1]!, 10)
-        const minutes = match12[2] ? parseInt(match12[2], 10) : 0
-        const period = match12[3]!
+        let hours = Number.parseInt(match12[1] ?? '', 10)
+        const minutes = match12[2] ? Number.parseInt(match12[2], 10) : 0
+        const period = match12[3]
+
+        if (Number.isNaN(hours) || Number.isNaN(minutes) || hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
+            throw new Error(
+                `Invalid time value: "${timeStr}". Hours must be between 1-12 and minutes between 0-59 for 12-hour format`
+            )
+        }
 
         if (period === 'pm' && hours !== 12) hours += 12
         if (period === 'am' && hours === 12) hours = 0
@@ -98,7 +115,7 @@ function parseAtExpression(expression: string): Date {
     const now = new Date()
     const parts = expression.toLowerCase().trim().split(/\s+/)
 
-    let targetDate = new Date(now)
+    const targetDate = new Date(now)
     let timeStr: string
 
     if (parts.length === 1) {
@@ -113,8 +130,8 @@ function parseAtExpression(expression: string): Date {
         const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
         const targetDay = days.indexOf(parts[0]!)
         const currentDay = now.getDay()
-        let daysUntil = targetDay - currentDay
-        if (daysUntil <= 0) daysUntil += 7
+        const rawDiff = targetDay - currentDay
+        const daysUntil = rawDiff <= 0 ? rawDiff + 7 : rawDiff
         targetDate.setDate(targetDate.getDate() + daysUntil)
         timeStr = parts.slice(1).join(' ')
     } else {
@@ -149,10 +166,22 @@ export class Reminders {
             { checkInterval: 1000, debug: false },
             {
                 onSent: (msg, result) => {
+                    if (this.reminders.has(msg.id) && msg.status !== 'pending') {
+                        this.reminders.delete(msg.id)
+                    }
                     events?.onSent?.(msg, result)
                 },
                 onError: (msg, error) => {
+                    if (this.reminders.has(msg.id) && msg.status !== 'pending') {
+                        this.reminders.delete(msg.id)
+                    }
                     events?.onError?.(msg, error)
+                },
+                onComplete: (msg) => {
+                    if (this.reminders.has(msg.id)) {
+                        this.reminders.delete(msg.id)
+                    }
+                    events?.onComplete?.(msg)
                 },
             }
         )
@@ -233,7 +262,13 @@ export class Reminders {
      * Get a reminder by ID
      */
     get(id: string): Reminder | undefined {
-        return this.reminders.get(id)
+        const reminder = this.reminders.get(id)
+        if (!reminder) return undefined
+
+        const sched = this.scheduler.get(id)
+        if (!sched || sched.status !== 'pending') return undefined
+
+        return reminder
     }
 
     /**
