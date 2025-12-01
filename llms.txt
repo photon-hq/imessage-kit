@@ -1,0 +1,247 @@
+# @photon-ai/imessage-kit - LLM Integration Guide
+
+> This file helps AI assistants understand how to use this SDK correctly.
+
+## Overview
+
+A TypeScript SDK for iMessage automation on macOS. Works with Node.js and Bun.
+
+## Installation
+
+```bash
+# Bun (recommended)
+bun add @photon-ai/imessage-kit
+
+# Node.js
+npm install @photon-ai/imessage-kit better-sqlite3
+```
+
+## Core Patterns
+
+### 1. Basic Setup
+
+```typescript
+import { IMessageSDK } from '@photon-ai/imessage-kit'
+
+const sdk = new IMessageSDK({ debug: true })
+
+// ... do work ...
+
+await sdk.close()  // Always close when done
+```
+
+### 2. Send Messages
+
+```typescript
+// Text
+await sdk.send('+1234567890', 'Hello!')
+
+// Images
+await sdk.send('+1234567890', { images: ['/path/to/image.jpg'] })
+
+// Files
+await sdk.send('+1234567890', { files: ['/path/to/doc.pdf'] })
+
+// Combined
+await sdk.send('+1234567890', {
+    text: 'Check this out',
+    images: ['photo.jpg'],
+    files: ['report.pdf']
+})
+
+// To group chat (use chatId from listChats)
+await sdk.send('chat45e2b868ce1e43da89af262922733382', 'Hello group!')
+```
+
+### 3. Query Messages
+
+```typescript
+// Get messages with filters
+const result = await sdk.getMessages({
+    sender: '+1234567890',
+    unreadOnly: true,
+    limit: 20,
+    since: new Date('2025-01-01'),
+    search: 'keyword'
+})
+
+// Get unread grouped by sender
+const unread = await sdk.getUnreadMessages()
+for (const { sender, messages } of unread.groups) {
+    console.log(`${sender}: ${messages.length} unread`)
+}
+```
+
+### 4. List Chats
+
+```typescript
+const chats = await sdk.listChats({
+    type: 'group',      // 'all' | 'group' | 'dm'
+    hasUnread: true,
+    sortBy: 'recent',
+    search: 'Project',
+    limit: 20
+})
+```
+
+### 5. Real-time Watching
+
+```typescript
+await sdk.startWatching({
+    onMessage: (msg) => { /* all messages */ },
+    onDirectMessage: (msg) => { /* DMs only */ },
+    onGroupMessage: (msg) => { /* groups only */ },
+    onError: (err) => { /* errors */ }
+})
+
+sdk.stopWatching()
+```
+
+### 6. Auto-Reply Bot
+
+```typescript
+await sdk.startWatching({
+    onDirectMessage: async (msg) => {
+        await sdk.message(msg)
+            .ifFromOthers()
+            .matchText(/hello/i)
+            .replyText('Hi there!')
+            .execute()
+    }
+})
+```
+
+### 7. Scheduled Messages
+
+```typescript
+import { IMessageSDK, MessageScheduler } from '@photon-ai/imessage-kit'
+
+const scheduler = new MessageScheduler(sdk)
+
+// One-time
+scheduler.schedule({
+    to: '+1234567890',
+    content: 'Reminder!',
+    sendAt: new Date(Date.now() + 5 * 60 * 1000)
+})
+
+// Recurring
+scheduler.scheduleRecurring({
+    to: '+1234567890',
+    content: 'Daily update',
+    startAt: new Date(),
+    interval: 'daily'  // 'hourly' | 'daily' | 'weekly' | 'monthly' | number (ms)
+})
+
+scheduler.destroy()  // Cleanup
+```
+
+### 8. Smart Reminders (Human-friendly)
+
+```typescript
+import { IMessageSDK, Reminders } from '@photon-ai/imessage-kit'
+
+const reminders = new Reminders(sdk)
+
+// Relative time
+reminders.in('5 minutes', '+1234567890', 'Break time!')
+reminders.in('2 hours', '+1234567890', 'Call client')
+
+// Specific time
+reminders.at('5pm', '+1234567890', 'End of day')
+reminders.at('tomorrow 9am', '+1234567890', 'Standup')
+reminders.at('friday 2pm', '+1234567890', 'Weekly sync')
+
+reminders.destroy()  // Cleanup
+```
+
+## Message Object
+
+```typescript
+interface Message {
+    id: string
+    guid: string
+    text: string | null
+    sender: string           // Phone or email
+    senderName: string | null
+    chatId: string
+    isGroupChat: boolean
+    isFromMe: boolean
+    isRead: boolean
+    service: 'iMessage' | 'SMS' | 'RCS'
+    attachments: Attachment[]
+    date: Date
+}
+```
+
+## Error Handling
+
+```typescript
+import { SendError, DatabaseError } from '@photon-ai/imessage-kit'
+
+try {
+    await sdk.send('+1234567890', 'Hello')
+} catch (error) {
+    if (error instanceof SendError) {
+        // Handle send failure
+    }
+}
+```
+
+## Best Practices
+
+1. **Always close SDK**: Call `sdk.close()` when done
+2. **Always destroy schedulers**: Call `scheduler.destroy()` or `reminders.destroy()`
+3. **Use absolute paths** for files and images
+4. **Check attachment existence** before downloading: `await attachmentExists(attachment)`
+5. **Handle errors** with try-catch for send operations
+6. **Use `ifFromOthers()`** in auto-reply to avoid infinite loops
+
+## Common Mistakes to Avoid
+
+1. ❌ Forgetting to call `sdk.close()` (leaks resources)
+2. ❌ Using relative paths for attachments
+3. ❌ Auto-replying without `ifFromOthers()` (causes loops)
+4. ❌ Not handling errors in send operations
+5. ❌ Forgetting to destroy scheduler/reminders
+
+## ChatId Formats
+
+- **Phone**: `'+1234567890'`
+- **Email**: `'user@example.com'`
+- **Group**: `'chat45e2b868ce1e43da89af262922733382'` (from listChats)
+- **Service-prefixed**: `'iMessage;+1234567890'` (from database)
+
+## Attachment Helpers
+
+```typescript
+import {
+    attachmentExists,
+    downloadAttachment,
+    getAttachmentSize,
+    isImageAttachment,
+    isVideoAttachment,
+    isAudioAttachment
+} from '@photon-ai/imessage-kit'
+```
+
+## Duration Formats (for Reminders)
+
+- `"30 seconds"`
+- `"5 minutes"`
+- `"2 hours"`
+- `"1 day"`
+- `"1 week"`
+
+## Time Formats (for Reminders.at)
+
+- `"5pm"`, `"5:30pm"`
+- `"17:30"` (24-hour)
+- `"tomorrow 9am"`
+- `"friday 2pm"`
+
+## Requirements
+
+- macOS only
+- Node.js >= 18 or Bun >= 1.0
+- Full Disk Access permission
