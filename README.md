@@ -542,6 +542,8 @@ Download `llms.txt` for language model context:
 
 ### Context7 MCP
 
+- [Context7 Docs](https://context7.com/photon-hq/imessage-kit)
+
 Add [Context7 MCP](https://context7.com/docs/installation) to your IDE, then use:
 
 ```
