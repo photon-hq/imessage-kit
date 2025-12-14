@@ -480,12 +480,19 @@ export class IMessageDatabase {
      * @returns Formatted Message object
      */
     private async rowToMessage(row: Record<string, unknown>): Promise<Message> {
-        // Try to get text from text field first
-        let messageText: string | null = row.text ? str(row.text) : null
+        // Priority: attributedBody > text field
+        // The text field may be truncated or incomplete in some cases,
+        // while attributedBody contains the complete message text
+        let messageText: string | null = null
 
-        // If text is null and attributedBody exists, try to extract from attributedBody
-        if (!messageText && row.attributedBody) {
+        // Try to extract from attributedBody first (more reliable)
+        if (row.attributedBody) {
             messageText = this.extractTextFromAttributedBody(row.attributedBody)
+        }
+
+        // Fall back to text field if attributedBody extraction failed
+        if (!messageText && row.text) {
+            messageText = str(row.text)
         }
 
         return {
