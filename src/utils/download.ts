@@ -4,7 +4,7 @@
  * - Converts AVIF/WebP to JPEG for iMessage compatibility
  */
 
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +12,7 @@ import { promisify } from 'node:util'
 import { SendError } from '../core/errors'
 import { delay } from './common'
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const TEMP_DIR = join(homedir(), 'Pictures')
 
 interface DownloadOptions {
@@ -27,8 +27,8 @@ const convertImageToJPEG = async (inputPath: string, outputPath?: string): Promi
     const output = outputPath || join(TEMP_DIR, `imsg_temp_${Date.now()}.jpg`)
 
     try {
-        const cmd = `sips -s format jpeg "${inputPath}" --out "${output}"`
-        await execAsync(cmd, { timeout: 10000 })
+        // Use execFile to avoid shell interpolation (security fix)
+        await execFileAsync('sips', ['-s', 'format', 'jpeg', inputPath, '--out', output], { timeout: 10000 })
 
         if (!existsSync(output)) {
             throw new Error('Converted file does not exist')

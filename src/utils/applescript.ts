@@ -162,7 +162,7 @@ end tell
  * @param str Original string
  * @returns Escaped string
  */
-const escapeAppleScriptString = (str: string): string => {
+export const escapeAppleScriptString = (str: string): string => {
     /** Escape mapping table */
     const escapeMap: Record<string, string> = {
         '\\': '\\\\', // Backslash
@@ -184,10 +184,11 @@ const escapeAppleScriptString = (str: string): string => {
  */
 export const generateSendTextScript = (recipient: string, text: string): string => {
     const escapedText = escapeAppleScriptString(text)
+    const escapedRecipient = escapeAppleScriptString(recipient)
 
     return `
 tell application "Messages"
-    set targetBuddy to buddy "${recipient}"
+    set targetBuddy to buddy "${escapedRecipient}"
     send "${escapedText}" to targetBuddy
 end tell
 `.trim()
@@ -244,19 +245,22 @@ function calculateFileDelay(filePath: string): number {
  * TempFileManager will auto-scan and clean these files
  */
 function generateSandboxBypassScript(filePath: string, recipient: string): string {
-    const fileName = filePath.split('/').pop()
-    const tempFileName = `imsg_temp_${Date.now()}_${fileName}`
+    const fileName = filePath.split('/').pop() || ''
+    const escapedFileName = escapeAppleScriptString(fileName)
+    const escapedFilePath = escapeAppleScriptString(filePath)
+    const escapedRecipient = escapeAppleScriptString(recipient)
+    const tempFileName = `imsg_temp_${Date.now()}_${escapedFileName}`
     const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: copy to Pictures directory
     set picturesFolder to POSIX path of (path to pictures folder)
     set targetPath to picturesFolder & "${tempFileName}"
-    do shell script "cp " & quoted form of "${filePath}" & " " & quoted form of targetPath
+    do shell script "cp " & quoted form of "${escapedFilePath}" & " " & quoted form of targetPath
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
-    set targetBuddy to buddy "${recipient}"
+    set targetBuddy to buddy "${escapedRecipient}"
     send theFile to targetBuddy
     delay ${delay}
     `.trim()
@@ -267,15 +271,17 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
  */
 function generateSandboxBypassScriptForChat(filePath: string, chatId: string): string {
     const escapedChatId = escapeAppleScriptString(chatId)
-    const fileName = filePath.split('/').pop()
-    const tempFileName = `imsg_temp_${Date.now()}_${fileName}`
+    const fileName = filePath.split('/').pop() || ''
+    const escapedFileName = escapeAppleScriptString(fileName)
+    const escapedFilePath = escapeAppleScriptString(filePath)
+    const tempFileName = `imsg_temp_${Date.now()}_${escapedFileName}`
     const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: copy to Pictures directory
     set picturesFolder to POSIX path of (path to pictures folder)
     set targetPath to picturesFolder & "${tempFileName}"
-    do shell script "cp " & quoted form of "${filePath}" & " " & quoted form of targetPath
+    do shell script "cp " & quoted form of "${escapedFilePath}" & " " & quoted form of targetPath
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
@@ -290,9 +296,10 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
  */
 function generateDirectSendScript(filePath: string, recipient: string): string {
     const escapedPath = escapeAppleScriptString(filePath)
+    const escapedRecipient = escapeAppleScriptString(recipient)
     const delay = calculateFileDelay(filePath)
     return `
-    set targetBuddy to buddy "${recipient}"
+    set targetBuddy to buddy "${escapedRecipient}"
     send POSIX file "${escapedPath}" to targetBuddy
     delay ${delay}
     `.trim()
@@ -383,6 +390,7 @@ export const generateSendWithAttachmentScript = (
     filePath: string
 ): { script: string } => {
     const escapedText = escapeAppleScriptString(text)
+    const escapedRecipient = escapeAppleScriptString(recipient)
     const needsBypass = needsSandboxBypass(filePath)
 
     const attachmentScript = needsBypass
@@ -392,7 +400,7 @@ export const generateSendWithAttachmentScript = (
     return {
         script: `
 tell application "Messages"
-    set targetBuddy to buddy "${recipient}"
+    set targetBuddy to buddy "${escapedRecipient}"
     
     -- Send text
     send "${escapedText}" to targetBuddy
