@@ -102,6 +102,20 @@ export class MessageChain {
     }
 
     /**
+     * Only process tapback reactions
+     */
+    ifReaction(): this {
+        return this.when((m) => m.isReaction)
+    }
+
+    /**
+     * Only process non-reaction messages (skip tapbacks)
+     */
+    ifNotReaction(): this {
+        return this.when((m) => !m.isReaction)
+    }
+
+    /**
      * Reply with text
      *
      * Automatically routes to recipient or group based on message.chatId

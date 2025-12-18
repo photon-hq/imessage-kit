@@ -10,7 +10,15 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { NSAttributedString, Unarchiver } from 'node-typedstream'
-import type { Attachment, ChatSummary, Message, MessageFilter, MessageQueryResult, ServiceType } from '../types/message'
+import type {
+    Attachment,
+    ChatSummary,
+    Message,
+    MessageFilter,
+    MessageQueryResult,
+    ReactionType,
+    ServiceType,
+} from '../types/message'
 import { DatabaseError } from './errors'
 
 /** Safe type conversion helper functions */
@@ -127,6 +135,7 @@ export class IMessageDatabase {
             chatId,
             service,
             hasAttachments,
+            excludeReactions,
             since,
             search,
             limit,
@@ -142,6 +151,8 @@ export class IMessageDatabase {
             message.is_read,
             message.is_from_me,
             message.service,
+            message.associated_message_type,
+            message.associated_message_guid,
             handle.id as sender,
             handle.ROWID as sender_rowid,
             chat.chat_identifier as chat_id,
@@ -187,6 +198,10 @@ export class IMessageDatabase {
                 WHERE message_attachment_join.message_id = message.ROWID
             )
             `
+        }
+
+        if (excludeReactions) {
+            query += ' AND (message.associated_message_type IS NULL OR message.associated_message_type = 0)'
         }
 
         if (since) {
@@ -495,6 +510,9 @@ export class IMessageDatabase {
             messageText = str(row.text)
         }
 
+        // Parse reaction information
+        const reaction = this.mapReactionType(row.associated_message_type)
+
         return {
             id: str(row.id),
             guid: str(row.guid),
@@ -506,6 +524,10 @@ export class IMessageDatabase {
             service: this.mapService(row.service),
             isRead: bool(row.is_read),
             isFromMe: bool(row.is_from_me),
+            isReaction: reaction.isReaction,
+            reactionType: reaction.reactionType,
+            isReactionRemoval: reaction.isReactionRemoval,
+            associatedMessageGuid: row.associated_message_guid ? str(row.associated_message_guid) : null,
             attachments: await this.getAttachments(str(row.id)),
             date: this.convertMacTimestamp(row.date),
         }
@@ -522,6 +544,45 @@ export class IMessageDatabase {
         if (lower.includes('sms')) return 'SMS'
         if (lower.includes('rcs')) return 'RCS'
         return 'iMessage'
+    }
+
+    /**
+     * Map associated_message_type to reaction information
+     * @param type Raw associated_message_type from database
+     * @returns Reaction details (isReaction, reactionType, isReactionRemoval)
+     */
+    private mapReactionType(type: unknown): {
+        isReaction: boolean
+        reactionType: ReactionType | null
+        isReactionRemoval: boolean
+    } {
+        const typeNum = typeof type === 'number' ? type : 0
+
+        // 0 or null means not a reaction
+        if (!typeNum) {
+            return { isReaction: false, reactionType: null, isReactionRemoval: false }
+        }
+
+        // 3000-3005 = reaction removal, 2000-2005 = reaction added
+        const isRemoval = typeNum >= 3000 && typeNum <= 3005
+        const baseType = isRemoval ? typeNum - 1000 : typeNum
+
+        const typeMap: Record<number, ReactionType> = {
+            2000: 'love',
+            2001: 'like',
+            2002: 'dislike',
+            2003: 'laugh',
+            2004: 'emphasize',
+            2005: 'question',
+        }
+
+        const reactionType = typeMap[baseType] ?? null
+
+        return {
+            isReaction: reactionType !== null,
+            reactionType,
+            isReactionRemoval: isRemoval,
+        }
     }
 
     /**

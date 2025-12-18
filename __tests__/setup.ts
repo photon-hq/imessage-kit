@@ -85,7 +85,9 @@ export function createMockDatabase(): { db: DatabaseAdapter; path: string; clean
             service TEXT,
             date INTEGER,
             is_read INTEGER DEFAULT 0,
-            is_from_me INTEGER DEFAULT 0
+            is_from_me INTEGER DEFAULT 0,
+            associated_message_type INTEGER DEFAULT 0,
+            associated_message_guid TEXT
         );
 
         CREATE TABLE IF NOT EXISTS chat_message_join (
@@ -139,6 +141,10 @@ export function insertTestMessage(
         date?: number
         chatGuid?: string
         participants?: string[]
+        /** Reaction type: 2000=love, 2001=like, 2002=dislike, 2003=laugh, 2004=emphasize, 2005=question */
+        associatedMessageType?: number
+        /** GUID of the message being reacted to */
+        associatedMessageGuid?: string
     }
 ): number {
     const {
@@ -150,6 +156,8 @@ export function insertTestMessage(
         date = Date.now(),
         chatGuid,
         participants = [],
+        associatedMessageType = 0,
+        associatedMessageGuid,
     } = options
 
     // Insert or get handle
@@ -180,10 +188,20 @@ export function insertTestMessage(
     // Insert message
     const guid = `test-${Date.now()}-${Math.random()}`
     const insertMessage = db.prepare(`
-        INSERT INTO message (guid, text, handle_id, service, date, is_read, is_from_me)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO message (guid, text, handle_id, service, date, is_read, is_from_me, associated_message_type, associated_message_guid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
-    insertMessage.run(guid, text, handleId, service, macTimestamp, isRead ? 1 : 0, isFromMe ? 1 : 0)
+    insertMessage.run(
+        guid,
+        text,
+        handleId,
+        service,
+        macTimestamp,
+        isRead ? 1 : 0,
+        isFromMe ? 1 : 0,
+        associatedMessageType,
+        associatedMessageGuid ?? null
+    )
     let messageId = db.query('SELECT last_insert_rowid() as id').get() as any
     messageId = (messageId as any).id
 
