@@ -13,6 +13,15 @@
  */
 export type ServiceType = 'iMessage' | 'SMS' | 'RCS'
 
+// ==================== Reaction type ====================
+
+/**
+ * Tapback reaction type
+ *
+ * iMessage tapback reactions that can be added to messages
+ */
+export type ReactionType = 'love' | 'like' | 'dislike' | 'laugh' | 'emphasize' | 'question'
+
 // ==================== Attachment ====================
 
 /**
@@ -99,6 +108,20 @@ export interface Message {
     /** Whether the message is sent by me */
     readonly isFromMe: boolean
 
+    // ===== Reaction information =====
+
+    /** Whether this message is a tapback reaction */
+    readonly isReaction: boolean
+
+    /** Type of reaction (null if not a reaction) */
+    readonly reactionType: ReactionType | null
+
+    /** Whether this is removing a reaction (vs adding) */
+    readonly isReactionRemoval: boolean
+
+    /** GUID of the message this reaction is associated with (null if not a reaction) */
+    readonly associatedMessageGuid: string | null
+
     // ===== Attachment information =====
 
     /** List of attachments (readonly array) */
@@ -141,6 +164,9 @@ export interface MessageFilter {
 
     /** Only query messages with attachments */
     readonly hasAttachments?: boolean
+
+    /** Exclude tapback reactions from results */
+    readonly excludeReactions?: boolean
 
     // ===== Time filter =====
 
