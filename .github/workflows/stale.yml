@@ -23,6 +23,6 @@ jobs:
           exempt-pr-labels: 'pinned,help wanted'
           stale-issue-message: 'This issue has been automatically marked as stale because it has not had recent activity. It will be closed after 21 days if no further activity occurs. Thank you for your contributions.'
           stale-pr-message: 'This pull request has been automatically marked as stale because it has not had recent activity. It will be closed after 21 days if no further activity occurs. Thank you for your contributions.'
-          close-issue-message: ''
-          close-pr-message: ''
+          close-issue-message: 'This issue has been automatically closed because it has been stale for 21 days with no additional activity. If you believe this was closed in error or still requires attention, please feel free to reopen or create a new issue with updated details.'
+          close-pr-message: 'This pull request has been automatically closed because it has been stale for 21 days with no additional activity. If you believe this was closed in error or would like to continue the work, please reopen the pull request or open a new one with updated changes.'
           operations-per-run: 30
