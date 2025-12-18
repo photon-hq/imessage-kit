@@ -200,4 +200,35 @@ describe('Reaction Detection', () => {
             expect(r.associatedMessageGuid).toBe(originalMessageGuid)
         }
     })
+
+    it('should exclude reactions with excludeReactions filter', async () => {
+        const database = new IMessageDatabase(dbPath)
+        const result = await database.getMessages({ limit: 10, excludeReactions: true })
+
+        const reactions = result.messages.filter((m) => m.isReaction)
+        expect(reactions.length).toBe(0)
+
+        // Should still have regular messages
+        expect(result.messages.length).toBeGreaterThan(0)
+    })
+
+    it('should handle invalid reaction type values gracefully', async () => {
+        // Insert message with invalid type (e.g., 9999)
+        const { db, path, cleanup: c } = createMockDatabase()
+        insertTestMessage(db, {
+            text: 'Invalid type message',
+            sender: '+9999999999',
+            associatedMessageType: 9999,
+            associatedMessageGuid: 'some-guid',
+        })
+
+        const database = new IMessageDatabase(path)
+        const result = await database.getMessages({ limit: 1 })
+
+        // Should treat as non-reaction
+        expect(result.messages[0].isReaction).toBe(false)
+        expect(result.messages[0].reactionType).toBeNull()
+
+        c()
+    })
 })

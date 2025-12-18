@@ -556,15 +556,22 @@ export class IMessageDatabase {
         reactionType: ReactionType | null
         isReactionRemoval: boolean
     } {
-        const typeNum = typeof type === 'number' ? type : 0
+        const typeNum = typeof type === 'number' && Number.isFinite(type) ? type : 0
 
-        // 0 or null means not a reaction
+        // 0 or null (or non-numeric) means not a reaction
         if (!typeNum) {
             return { isReaction: false, reactionType: null, isReactionRemoval: false }
         }
 
-        // 3000-3005 = reaction removal, 2000-2005 = reaction added
-        const isRemoval = typeNum >= 3000 && typeNum <= 3005
+        // Only 2000-2005 (add) and 3000-3005 (remove) are valid reaction types
+        const isInAddRange = typeNum >= 2000 && typeNum <= 2005
+        const isInRemoveRange = typeNum >= 3000 && typeNum <= 3005
+
+        if (!isInAddRange && !isInRemoveRange) {
+            return { isReaction: false, reactionType: null, isReactionRemoval: false }
+        }
+
+        const isRemoval = isInRemoveRange
         const baseType = isRemoval ? typeNum - 1000 : typeNum
 
         const typeMap: Record<number, ReactionType> = {
@@ -576,11 +583,9 @@ export class IMessageDatabase {
             2005: 'question',
         }
 
-        const reactionType = typeMap[baseType] ?? null
-
         return {
-            isReaction: reactionType !== null,
-            reactionType,
+            isReaction: true,
+            reactionType: typeMap[baseType] ?? null,
             isReactionRemoval: isRemoval,
         }
     }
