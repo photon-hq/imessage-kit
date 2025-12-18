@@ -1,0 +1,67 @@
+---
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please provide as much detail as possible to help us understand your idea.
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: What would you like to be added?
+      description: A clear and concise description of the feature.
+      placeholder: I would like the SDK to support...
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why is this needed?
+      description: Explain the problem this feature would solve.
+      placeholder: Currently, I cannot do X because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Example usage
+      description: Show how you would use this feature in code.
+      placeholder: |
+        const sdk = new IMessageSDK({ ... })
+        
+        // Example of how the new feature would work
+        await sdk.newFeature()
+      render: typescript
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How many users would benefit?
+      options:
+        - Few (niche use case)
+        - Some (common scenario)
+        - Many (most users would benefit)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willing-to-contribute
+    attributes:
+      label: Would you be willing to contribute this feature?
+      options:
+        - "Yes, I can submit a PR"
+        - "Yes, with guidance"
+        - "No, but I can help test"
+        - "No"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other context, mockups, or references.
