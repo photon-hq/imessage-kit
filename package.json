@@ -1,6 +1,6 @@
 {
     "name": "@photon-ai/imessage-kit",
-    "version": "2.0.2",
+    "version": "2.1.0",
     "description": "A type-safe, elegant iMessage SDK for macOS with zero dependencies",
     "author": "GreatSomething",
     "license": "MIT",
