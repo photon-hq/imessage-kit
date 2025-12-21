@@ -2,7 +2,7 @@
  * Temporary file manager
  */
 
-import { existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -111,7 +111,16 @@ export class TempFileManager {
                     const filePath = join(TEMP_DIR, file)
 
                     try {
-                        const stats = statSync(filePath)
+                        const stats = lstatSync(filePath)
+
+                        // Security: Skip non-regular files (including symlinks, dirs, devices)
+                        if (!stats.isFile()) {
+                            if (this.config.debug) {
+                                console.log(`[TempFileManager] Skipping non-regular file: ${file}`)
+                            }
+                            continue
+                        }
+
                         const fileAge = now - stats.mtimeMs
 
                         /** Delete files exceeding retention time */
@@ -170,6 +179,16 @@ export class TempFileManager {
                     const filePath = join(TEMP_DIR, file)
 
                     try {
+                        const stats = lstatSync(filePath)
+
+                        // Security: Skip non-regular files (including symlinks)
+                        if (!stats.isFile()) {
+                            if (this.config.debug) {
+                                console.log(`[TempFileManager] Skipping non-regular file: ${file}`)
+                            }
+                            continue
+                        }
+
                         unlinkSync(filePath)
                         removed++
 

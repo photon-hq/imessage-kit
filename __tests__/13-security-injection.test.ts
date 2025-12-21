@@ -418,14 +418,13 @@ describe('Security: Source Code Audit', () => {
         // Verify escapeAppleScriptString is exported
         expect(source).toContain('export const escapeAppleScriptString')
 
-        // Verify escapedFilePath is used
+        // Verify escapedFilePath is used (for cat command)
         expect(source).toContain('const escapedFilePath = escapeAppleScriptString(filePath)')
-
-        // Verify escapedFileName is used
-        expect(source).toContain('const escapedFileName = escapeAppleScriptString(fileName)')
 
         // Verify escapedRecipient is used in relevant functions
         expect(source).toContain('const escapedRecipient = escapeAppleScriptString(recipient)')
+
+        // Note: escapedFileName is no longer needed since mktemp generates secure random names
     })
 
     test('no raw filePath in do shell script commands', () => {
@@ -433,11 +432,15 @@ describe('Security: Source Code Audit', () => {
 
         // The pattern `"${filePath}"` should NOT appear in do shell script context
         // Instead, `"${escapedFilePath}"` should be used
+        // Note: mktemp lines create empty files, cat lines copy content
         const doShellScriptLines = source.split('\n').filter((line) => line.includes('do shell script'))
 
         for (const line of doShellScriptLines) {
             expect(line).not.toContain('"${filePath}"')
-            expect(line).toContain('${escapedFilePath}')
+            // Lines with cat should use escapedFilePath; mktemp lines don't need it
+            if (line.includes('cat ')) {
+                expect(line).toContain('${escapedFilePath}')
+            }
         }
     })
 
