@@ -253,7 +253,7 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
     return `
     -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXX")
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXXXX")
     do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send
@@ -276,7 +276,7 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
     return `
     -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXX")
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXXXX")
     do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send

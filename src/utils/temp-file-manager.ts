@@ -113,8 +113,8 @@ export class TempFileManager {
                     try {
                         const stats = lstatSync(filePath)
 
-                        // Security: Skip symlinks and non-regular files (prevent symlink attacks)
-                        if (!stats.isFile() || stats.isSymbolicLink()) {
+                        // Security: Skip non-regular files (including symlinks, dirs, devices)
+                        if (!stats.isFile()) {
                             if (this.config.debug) {
                                 console.log(`[TempFileManager] Skipping non-regular file: ${file}`)
                             }
@@ -181,8 +181,8 @@ export class TempFileManager {
                     try {
                         const stats = lstatSync(filePath)
 
-                        // Security: Skip symlinks and non-regular files
-                        if (!stats.isFile() || stats.isSymbolicLink()) {
+                        // Security: Skip non-regular files (including symlinks)
+                        if (!stats.isFile()) {
                             if (this.config.debug) {
                                 console.log(`[TempFileManager] Skipping non-regular file: ${file}`)
                             }

@@ -59,14 +59,14 @@ describe('Security: Temp File Symlink/TOCTOU Protection', () => {
             expect(source).not.toMatch(/import.*\bstatSync\b/)
         })
 
-        test('cleanup should check for symlinks before unlinking', () => {
+        test('cleanup should check for non-regular files before unlinking', () => {
             const source = readFileSync(new URL('../src/utils/temp-file-manager.ts', import.meta.url), 'utf-8')
 
-            // Must check isSymbolicLink() before deleting
-            expect(source).toContain('isSymbolicLink()')
-
-            // Must check isFile() before deleting
+            // Must check isFile() before deleting (catches symlinks, dirs, devices, etc.)
             expect(source).toContain('isFile()')
+
+            // Must use lstatSync (already verified in previous test)
+            expect(source).toContain('lstatSync')
         })
     })
 
