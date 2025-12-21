@@ -5,6 +5,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +16,11 @@ import { delay } from './common'
 const execFileAsync = promisify(execFile)
 const TEMP_DIR = join(homedir(), 'Pictures')
 
+/** Generate cryptographically secure temp filename (prevents TOCTOU attacks) */
+const generateSecureFilename = (ext: string): string => {
+    return `imsg_temp_${randomBytes(8).toString('hex')}${ext}`
+}
+
 interface DownloadOptions {
     timeout?: number // Default: 15000ms
     maxRetries?: number // Default: 2
@@ -24,7 +30,7 @@ interface DownloadOptions {
 
 /** Convert image to JPEG using macOS sips command */
 const convertImageToJPEG = async (inputPath: string, outputPath?: string): Promise<string> => {
-    const output = outputPath || join(TEMP_DIR, `imsg_temp_${Date.now()}.jpg`)
+    const output = outputPath || join(TEMP_DIR, generateSecureFilename('.jpg'))
 
     try {
         // Use execFile to avoid shell interpolation (security fix)
@@ -80,11 +86,11 @@ export const downloadImage = async (url: string, options: DownloadOptions = {}):
             const contentType = response.headers.get('content-type')?.toLowerCase() || ''
             const buffer = Buffer.from(await response.arrayBuffer())
 
-            // Handle AVIF/WebP - convert to JPEG
             if (contentType.includes('avif') || contentType.includes('webp')) {
                 const ext = contentType.includes('avif') ? '.avif' : '.webp'
-                const tempPath = join(TEMP_DIR, `imsg_temp_${Date.now()}${ext}`)
-                writeFileSync(tempPath, buffer)
+                const tempPath = join(TEMP_DIR, generateSecureFilename(ext))
+                // Security: Exclusive write (wx) fails if file exists, restricted permissions
+                writeFileSync(tempPath, buffer, { flag: 'wx', mode: 0o600 })
 
                 const converted = await convertImageToJPEG(tempPath)
                 if (debug) {
@@ -102,8 +108,9 @@ export const downloadImage = async (url: string, options: DownloadOptions = {}):
             }
             const ext = Object.entries(extMap).find(([key]) => contentType.includes(key))?.[1] || '.jpg'
 
-            const path = join(TEMP_DIR, `imsg_temp_${Date.now()}${ext}`)
-            writeFileSync(path, buffer)
+            const path = join(TEMP_DIR, generateSecureFilename(ext))
+            // Security: Exclusive write (wx) fails if file exists, restricted permissions
+            writeFileSync(path, buffer, { flag: 'wx', mode: 0o600 })
             return path
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error))
@@ -141,7 +148,7 @@ export const convertToCompatibleFormat = async (filePath: string): Promise<{ pat
         .pop()!
         .replace(/\.(avif|webp)$/i, '.jpg')
     const isOurTemp = fileName.startsWith('imsg_temp_')
-    const output = isOurTemp ? join(TEMP_DIR, fileName) : join(TEMP_DIR, `imsg_temp_${Date.now()}_${fileName}`)
+    const output = isOurTemp ? join(TEMP_DIR, fileName) : join(TEMP_DIR, generateSecureFilename('.jpg'))
 
     const converted = await convertImageToJPEG(filePath, output)
     return { path: converted, converted: true }

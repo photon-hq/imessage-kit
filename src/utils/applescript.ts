@@ -242,21 +242,19 @@ function calculateFileDelay(filePath: string): number {
  * Generate sandbox bypass script snippet
  *
  * Copy file to ~/Pictures/imsg_temp_* to bypass sandbox restrictions
+ * Uses mktemp for atomic file creation (prevents TOCTOU attacks)
  * TempFileManager will auto-scan and clean these files
  */
 function generateSandboxBypassScript(filePath: string, recipient: string): string {
-    const fileName = filePath.split('/').pop() || ''
-    const escapedFileName = escapeAppleScriptString(fileName)
     const escapedFilePath = escapeAppleScriptString(filePath)
     const escapedRecipient = escapeAppleScriptString(recipient)
-    const tempFileName = `imsg_temp_${Date.now()}_${escapedFileName}`
     const delay = calculateFileDelay(filePath)
 
     return `
-    -- Bypass sandbox: copy to Pictures directory
+    -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to picturesFolder & "${tempFileName}"
-    do shell script "cp " & quoted form of "${escapedFilePath}" & " " & quoted form of targetPath
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXX")
+    do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
@@ -268,20 +266,18 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
 
 /**
  * Generate sandbox bypass script snippet for chatId target
+ * Uses mktemp for atomic file creation (prevents TOCTOU attacks)
  */
 function generateSandboxBypassScriptForChat(filePath: string, chatId: string): string {
     const escapedChatId = escapeAppleScriptString(chatId)
-    const fileName = filePath.split('/').pop() || ''
-    const escapedFileName = escapeAppleScriptString(fileName)
     const escapedFilePath = escapeAppleScriptString(filePath)
-    const tempFileName = `imsg_temp_${Date.now()}_${escapedFileName}`
     const delay = calculateFileDelay(filePath)
 
     return `
-    -- Bypass sandbox: copy to Pictures directory
+    -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to picturesFolder & "${tempFileName}"
-    do shell script "cp " & quoted form of "${escapedFilePath}" & " " & quoted form of targetPath
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXX")
+    do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
