@@ -201,11 +201,38 @@ describe('Security: AppleScript Injection Prevention', () => {
             expect(script).toContain('evil\\"')
         })
 
-        test('should escape file name in temp file name', () => {
+        test('should sanitize file name in temp file template', () => {
             const { script } = generateSendAttachmentScript('user', '/tmp/bad"name.jpg')
-            // The temp file name should have escaped quotes
-            expect(script).toContain('bad\\"name.jpg')
-            expect(script).not.toContain('bad"name.jpg')
+            // The temp file template should have sanitized special characters (quotes replaced with _)
+            expect(script).toContain('bad_name_')
+            expect(script).toContain('.jpg')
+            expect(script).not.toContain('bad"name')
+        })
+
+        test('should replace X characters in filename to avoid mktemp confusion', () => {
+            const { script } = generateSendAttachmentScript('user', '/tmp/fileXXXname.png')
+            // X characters should be replaced with _ in the mktemp template
+            expect(script).toMatch(/imsg_temp_file___name_XXXXXXXXXX\.png/)
+        })
+
+        test('should handle compound extensions (only last extension preserved)', () => {
+            const { script } = generateSendAttachmentScript('user', '/tmp/archive.tar.gz')
+            // extname only returns .gz, .tar becomes part of basename
+            expect(script).toMatch(/imsg_temp_archive\.tar_XXXXXXXXXX\.gz/)
+        })
+
+        test('should handle dotfiles (basename starts with dot)', () => {
+            const { script } = generateSendAttachmentScript('user', '/tmp/.hidden')
+            // For .hidden, basename is ".hidden" and ext is empty, dot is allowed
+            expect(script).toMatch(/imsg_temp_\.hidden_XXXXXXXXXX/)
+        })
+
+        test('should truncate excessively long filenames in template', () => {
+            const longName = 'a'.repeat(100)
+            const { script } = generateSendAttachmentScript('user', `/tmp/${longName}.jpg`)
+            // Basename should be truncated to 60 chars in mktemp template
+            const truncatedName = 'a'.repeat(60)
+            expect(script).toMatch(new RegExp(`imsg_temp_${truncatedName}_XXXXXXXXXX\\.jpg`))
         })
     })
 

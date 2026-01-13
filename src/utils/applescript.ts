@@ -9,6 +9,7 @@
  */
 
 import { exec } from 'node:child_process'
+import { basename, extname } from 'node:path'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(exec)
@@ -221,6 +222,39 @@ function needsSandboxBypass(filePath: string): boolean {
 }
 
 /**
+ * Build a `mktemp`-compatible filename template that preserves the original file
+ * extension for better UX in Messages.
+ *
+ * Sanitization rules and rationale:
+ * - Special characters in the basename are replaced with underscores (`_`)
+ *   to produce a shell-safe template and avoid issues when passed to `mktemp`.
+ * - Literal `X` characters in the basename are replaced with underscores to
+ *   avoid confusion with `mktemp`'s own `X` pattern, which it interprets as
+ *   a placeholder for random characters.
+ * - The sanitized basename is truncated to 60 characters to keep the final
+ *   path length within reasonable limits.
+ *
+ * The final template has the form:
+ *   `imsg_temp_{basename}_XXXXXXXXXX{ext}`
+ * where:
+ * - `{basename}` is the sanitized, at-most-60-character basename (or omitted
+ *   entirely if empty, in which case the underscore is also omitted), and
+ * - `{ext}` is the sanitized file extension (non-alphanumeric characters are
+ *   stripped).
+ */
+function buildTempFilenameTemplate(filePath: string): string {
+    const ext = extname(filePath)
+    const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, '')
+    const base = basename(filePath, ext)
+    const safeBase = base
+        .replace(/[^a-zA-Z0-9._-]/g, '_')
+        .replace(/X/g, '_')
+        .slice(0, 60)
+    const basePart = safeBase ? `${safeBase}_` : ''
+    return `imsg_temp_${basePart}XXXXXXXXXX${safeExt}`
+}
+
+/**
  * Calculate delay based on file size
  * Small files: 2s, Medium files: 3s, Large files: 5s
  */
@@ -248,12 +282,13 @@ function calculateFileDelay(filePath: string): number {
 function generateSandboxBypassScript(filePath: string, recipient: string): string {
     const escapedFilePath = escapeAppleScriptString(filePath)
     const escapedRecipient = escapeAppleScriptString(recipient)
+    const escapedTemplate = escapeAppleScriptString(buildTempFilenameTemplate(filePath))
     const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXXXX")
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "${escapedTemplate}")
     do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send
@@ -271,12 +306,13 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
 function generateSandboxBypassScriptForChat(filePath: string, chatId: string): string {
     const escapedChatId = escapeAppleScriptString(chatId)
     const escapedFilePath = escapeAppleScriptString(filePath)
+    const escapedTemplate = escapeAppleScriptString(buildTempFilenameTemplate(filePath))
     const delay = calculateFileDelay(filePath)
 
     return `
     -- Bypass sandbox: atomic temp file creation with mktemp (prevents TOCTOU)
     set picturesFolder to POSIX path of (path to pictures folder)
-    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "imsg_temp_XXXXXXXXXX")
+    set targetPath to do shell script "mktemp " & quoted form of (picturesFolder & "${escapedTemplate}")
     do shell script "cat " & quoted form of "${escapedFilePath}" & " > " & quoted form of targetPath & " && chmod 600 " & quoted form of targetPath & " || { rm -f " & quoted form of targetPath & "; exit 1; }"
     
     -- Create file reference and send
