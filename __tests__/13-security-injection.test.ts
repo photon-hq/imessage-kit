@@ -201,11 +201,12 @@ describe('Security: AppleScript Injection Prevention', () => {
             expect(script).toContain('evil\\"')
         })
 
-        test('should escape file name in temp file name', () => {
+        test('should sanitize file name in temp file template', () => {
             const { script } = generateSendAttachmentScript('user', '/tmp/bad"name.jpg')
-            // The temp file name should have escaped quotes
-            expect(script).toContain('bad\\"name.jpg')
-            expect(script).not.toContain('bad"name.jpg')
+            // The temp file template should have sanitized special characters (quotes replaced with _)
+            expect(script).toContain('bad_name_')
+            expect(script).toContain('.jpg')
+            expect(script).not.toContain('bad"name')
         })
     })
 
