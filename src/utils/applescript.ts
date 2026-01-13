@@ -228,7 +228,10 @@ function buildTempFilenameTemplate(filePath: string): string {
     const ext = extname(filePath)
     const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, '')
     const base = basename(filePath, ext)
-    const safeBase = base.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/X/g, '_').slice(0, 60)
+    const safeBase = base
+        .replace(/[^a-zA-Z0-9._-]/g, '_')
+        .replace(/X/g, '_')
+        .slice(0, 60)
     const basePart = safeBase ? `${safeBase}_` : ''
     return `imsg_temp_${basePart}XXXXXXXXXX${safeExt}`
 }
