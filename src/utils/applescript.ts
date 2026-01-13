@@ -222,7 +222,25 @@ function needsSandboxBypass(filePath: string): boolean {
 }
 
 /**
- * Build a mktemp template that preserves file extension for better UX in Messages
+ * Build a `mktemp`-compatible filename template that preserves the original file
+ * extension for better UX in Messages.
+ *
+ * Sanitization rules and rationale:
+ * - Special characters in the basename are replaced with underscores (`_`)
+ *   to produce a shell-safe template and avoid issues when passed to `mktemp`.
+ * - Literal `X` characters in the basename are replaced with underscores to
+ *   avoid confusion with `mktemp`'s own `X` pattern, which it interprets as
+ *   a placeholder for random characters.
+ * - The sanitized basename is truncated to 60 characters to keep the final
+ *   path length within reasonable limits.
+ *
+ * The final template has the form:
+ *   `imsg_temp_{basename}_XXXXXXXXXX{ext}`
+ * where:
+ * - `{basename}` is the sanitized, at-most-60-character basename (or omitted
+ *   entirely if empty, in which case the underscore is also omitted), and
+ * - `{ext}` is the sanitized file extension (non-alphanumeric characters are
+ *   stripped).
  */
 function buildTempFilenameTemplate(filePath: string): string {
     const ext = extname(filePath)
