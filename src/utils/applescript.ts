@@ -189,7 +189,8 @@ export const generateSendTextScript = (recipient: string, text: string): string 
 
     return `
 tell application "Messages"
-    set targetBuddy to buddy "${escapedRecipient}"
+    set targetService to 1st service whose service type = iMessage
+    set targetBuddy to buddy "${escapedRecipient}" of targetService
     send "${escapedText}" to targetBuddy
 end tell
 `.trim()
@@ -293,7 +294,8 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
-    set targetBuddy to buddy "${escapedRecipient}"
+    set targetService to 1st service whose service type = iMessage
+    set targetBuddy to buddy "${escapedRecipient}" of targetService
     send theFile to targetBuddy
     delay ${delay}
     `.trim()
@@ -331,7 +333,8 @@ function generateDirectSendScript(filePath: string, recipient: string): string {
     const escapedRecipient = escapeAppleScriptString(recipient)
     const delay = calculateFileDelay(filePath)
     return `
-    set targetBuddy to buddy "${escapedRecipient}"
+    set targetService to 1st service whose service type = iMessage
+    set targetBuddy to buddy "${escapedRecipient}" of targetService
     send POSIX file "${escapedPath}" to targetBuddy
     delay ${delay}
     `.trim()
@@ -432,11 +435,12 @@ export const generateSendWithAttachmentScript = (
     return {
         script: `
 tell application "Messages"
-    set targetBuddy to buddy "${escapedRecipient}"
-    
+    set targetService to 1st service whose service type = iMessage
+    set targetBuddy to buddy "${escapedRecipient}" of targetService
+
     -- Send text
     send "${escapedText}" to targetBuddy
-    
+
     -- Send attachment
 ${attachmentScript}
 end tell
