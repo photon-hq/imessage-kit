@@ -279,7 +279,6 @@ function calculateFileDelay(filePath: string): number {
  * Copy file to ~/Pictures/imsg_temp_* to bypass sandbox restrictions
  * Uses mktemp for atomic file creation (prevents TOCTOU attacks)
  * TempFileManager will auto-scan and clean these files
- * Requires `targetBuddy` to already be set in the outer script scope
  */
 function generateSandboxBypassScript(filePath: string): string {
     const escapedFilePath = escapeAppleScriptString(filePath)
