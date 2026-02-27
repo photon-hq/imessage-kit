@@ -280,9 +280,8 @@ function calculateFileDelay(filePath: string): number {
  * Uses mktemp for atomic file creation (prevents TOCTOU attacks)
  * TempFileManager will auto-scan and clean these files
  */
-function generateSandboxBypassScript(filePath: string, recipient: string): string {
+function generateSandboxBypassScript(filePath: string): string {
     const escapedFilePath = escapeAppleScriptString(filePath)
-    const escapedRecipient = escapeAppleScriptString(recipient)
     const escapedTemplate = escapeAppleScriptString(buildTempFilenameTemplate(filePath))
     const delay = calculateFileDelay(filePath)
 
@@ -294,8 +293,6 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
-    set targetService to 1st service whose service type = iMessage
-    set targetBuddy to buddy "${escapedRecipient}" of targetService
     send theFile to targetBuddy
     delay ${delay}
     `.trim()
@@ -305,8 +302,7 @@ function generateSandboxBypassScript(filePath: string, recipient: string): strin
  * Generate sandbox bypass script snippet for chatId target
  * Uses mktemp for atomic file creation (prevents TOCTOU attacks)
  */
-function generateSandboxBypassScriptForChat(filePath: string, chatId: string): string {
-    const escapedChatId = escapeAppleScriptString(chatId)
+function generateSandboxBypassScriptForChat(filePath: string): string {
     const escapedFilePath = escapeAppleScriptString(filePath)
     const escapedTemplate = escapeAppleScriptString(buildTempFilenameTemplate(filePath))
     const delay = calculateFileDelay(filePath)
@@ -319,7 +315,6 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
     
     -- Create file reference and send
     set theFile to (POSIX file targetPath) as alias
-    set targetChat to chat id "${escapedChatId}"
     send theFile to targetChat
     delay ${delay}
     `.trim()
@@ -328,13 +323,10 @@ function generateSandboxBypassScriptForChat(filePath: string, chatId: string): s
 /**
  * Generate direct file send script snippet
  */
-function generateDirectSendScript(filePath: string, recipient: string): string {
+function generateDirectSendScript(filePath: string): string {
     const escapedPath = escapeAppleScriptString(filePath)
-    const escapedRecipient = escapeAppleScriptString(recipient)
     const delay = calculateFileDelay(filePath)
     return `
-    set targetService to 1st service whose service type = iMessage
-    set targetBuddy to buddy "${escapedRecipient}" of targetService
     send POSIX file "${escapedPath}" to targetBuddy
     delay ${delay}
     `.trim()
@@ -343,12 +335,10 @@ function generateDirectSendScript(filePath: string, recipient: string): string {
 /**
  * Generate direct file send script snippet for chatId target
  */
-function generateDirectSendScriptForChat(filePath: string, chatId: string): string {
-    const escapedChatId = escapeAppleScriptString(chatId)
+function generateDirectSendScriptForChat(filePath: string): string {
     const escapedPath = escapeAppleScriptString(filePath)
     const delay = calculateFileDelay(filePath)
     return `
-    set targetChat to chat id "${escapedChatId}"
     send POSIX file "${escapedPath}" to targetChat
     delay ${delay}
     `.trim()
@@ -367,19 +357,21 @@ export const generateSendAttachmentScript = (
     filePath: string,
     debug = false
 ): { script: string } => {
+    const escapedRecipient = escapeAppleScriptString(recipient)
     const needsBypass = needsSandboxBypass(filePath)
 
     if (needsBypass && debug) {
         console.log('[AppleScript] Non-sandbox directory detected, will temporarily copy to ~/Pictures')
     }
 
-    const sendScript = needsBypass
-        ? generateSandboxBypassScript(filePath, recipient)
-        : generateDirectSendScript(filePath, recipient)
+    const sendScript = needsBypass ? generateSandboxBypassScript(filePath) : generateDirectSendScript(filePath)
 
     return {
         script: `
 tell application "Messages"
+    set targetService to 1st service whose service type = iMessage
+    set targetBuddy to buddy "${escapedRecipient}" of targetService
+
 ${sendScript}
 end tell
         `.trim(),
@@ -390,6 +382,7 @@ end tell
  * Generate AppleScript for sending attachment to a chat by chatId
  */
 export const generateSendAttachmentToChat = (chatId: string, filePath: string, debug = false): { script: string } => {
+    const escapedChatId = escapeAppleScriptString(chatId)
     const needsBypass = needsSandboxBypass(filePath)
 
     if (needsBypass && debug) {
@@ -397,12 +390,14 @@ export const generateSendAttachmentToChat = (chatId: string, filePath: string, d
     }
 
     const sendScript = needsBypass
-        ? generateSandboxBypassScriptForChat(filePath, chatId)
-        : generateDirectSendScriptForChat(filePath, chatId)
+        ? generateSandboxBypassScriptForChat(filePath)
+        : generateDirectSendScriptForChat(filePath)
 
     return {
         script: `
 tell application "Messages"
+    set targetChat to chat id "${escapedChatId}"
+
 ${sendScript}
 end tell
         `.trim(),
@@ -428,9 +423,7 @@ export const generateSendWithAttachmentScript = (
     const escapedRecipient = escapeAppleScriptString(recipient)
     const needsBypass = needsSandboxBypass(filePath)
 
-    const attachmentScript = needsBypass
-        ? generateSandboxBypassScript(filePath, recipient)
-        : generateDirectSendScript(filePath, recipient)
+    const attachmentScript = needsBypass ? generateSandboxBypassScript(filePath) : generateDirectSendScript(filePath)
 
     return {
         script: `
@@ -461,8 +454,8 @@ export const generateSendWithAttachmentToChat = (
     const needsBypass = needsSandboxBypass(filePath)
 
     const attachmentScript = needsBypass
-        ? generateSandboxBypassScriptForChat(filePath, chatId)
-        : generateDirectSendScriptForChat(filePath, chatId)
+        ? generateSandboxBypassScriptForChat(filePath)
+        : generateDirectSendScriptForChat(filePath)
 
     return {
         script: `
