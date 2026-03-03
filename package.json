@@ -80,6 +80,6 @@
     },
     "sideEffects": false,
     "dependencies": {
-        "node-typedstream": "^1.4.1"
+        "@parseaple/typedstream": "^2.0.0"
     }
 }

@@ -1,11 +1,11 @@
 /**
  * AttributedBody Extraction Tests
  *
- * Tests for the node-typedstream based attributedBody extraction
+ * Tests for the @parseaple/typedstream based attributedBody extraction
  */
 
 import { describe, expect, it } from 'bun:test'
-import { NSAttributedString, Unarchiver } from 'node-typedstream'
+import { NSAttributedString, Unarchiver } from '@parseaple/typedstream'
 
 /**
  * Helper function that mirrors the extraction logic in database.ts
@@ -36,7 +36,7 @@ function extractTextFromAttributedBody(attributedBody: unknown): string | null {
                 return item.string
             }
 
-            if (item?.values && Array.isArray(item.values)) {
+            if (item !== null && typeof item === 'object' && 'values' in item && Array.isArray(item.values)) {
                 for (const val of item.values) {
                     if (val instanceof NSAttributedString && val.string) {
                         return val.string
@@ -88,12 +88,12 @@ describe('AttributedBody Extraction', () => {
 
     describe('NSAttributedString Handling', () => {
         it('should correctly identify NSAttributedString type', () => {
-            const instance = new NSAttributedString()
+            const instance = new NSAttributedString('', [])
             expect(instance).toBeInstanceOf(NSAttributedString)
         })
 
         it('should access string property of NSAttributedString', () => {
-            const instance = new NSAttributedString()
+            const instance = new NSAttributedString('', [])
             // NSAttributedString.string is the property we need
             expect('string' in instance).toBe(true)
         })
