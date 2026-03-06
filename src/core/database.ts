@@ -9,7 +9,7 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { NSAttributedString, Unarchiver } from 'node-typedstream'
+import { NSAttributedString, Unarchiver } from '@parseaple/typedstream'
 import type {
     Attachment,
     ChatSummary,
@@ -439,7 +439,7 @@ export class IMessageDatabase {
     }
 
     /**
-     * Extract text from attributedBody using node-typedstream
+     * Extract text from attributedBody using @parseaple/typedstream
      * Uses proper NSKeyedArchiver deserialization for accurate text extraction
      * @param attributedBody Binary plist data (NSKeyedArchiver format)
      * @returns Extracted text or null if extraction fails
@@ -459,7 +459,7 @@ export class IMessageDatabase {
 
             if (buffer.length === 0) return null
 
-            // Use node-typedstream to properly decode NSKeyedArchiver format
+            // Use @parseaple/typedstream to properly decode NSKeyedArchiver format
             const decoded = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeAll()
 
             if (!decoded) return null
@@ -474,7 +474,7 @@ export class IMessageDatabase {
                 }
 
                 // Nested in values array (common structure)
-                if (item?.values && Array.isArray(item.values)) {
+                if (item !== null && typeof item === 'object' && 'values' in item && Array.isArray(item.values)) {
                     for (const val of item.values) {
                         if (val instanceof NSAttributedString && val.string) {
                             return val.string
