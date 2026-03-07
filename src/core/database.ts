@@ -26,6 +26,26 @@ const str = (v: unknown, fallback = ''): string => (v == null ? fallback : Strin
 const num = (v: unknown, fallback = 0): number => (typeof v === 'number' ? v : fallback)
 const bool = (v: unknown): boolean => Boolean(v)
 
+// resolveChatId returns the chat identifier used for AppleScript routing.
+// Prefers chat.guid which already carries the service prefix
+// (e.g. "iMessage;+;chat613...") that AppleScript's "chat id" requires.
+function resolveChatId(
+    guid: string,
+    identifier: string,
+    serviceName: string
+): string {
+    if (guid) {
+        return guid
+    }
+    if (identifier.includes(';')) {
+        return identifier
+    }
+    if (serviceName) {
+        return `${serviceName};${identifier}`
+    }
+    return `iMessage;${identifier}`
+}
+
 /**
  * Runtime detection and database adapter
  * Automatically uses bun:sqlite for Bun runtime, better-sqlite3 for Node.js
@@ -156,6 +176,8 @@ export class IMessageDatabase {
             handle.id as sender,
             handle.ROWID as sender_rowid,
             chat.chat_identifier as chat_id,
+            chat.guid as chat_guid,
+            chat.service_name as chat_service,
             chat.display_name as chat_name,
             chat.ROWID as chat_rowid,
             (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 as is_group_chat
@@ -354,20 +376,7 @@ export class IMessageDatabase {
                 const identifierRaw = row.chat_identifier == null ? '' : str(row.chat_identifier)
                 const service = row.service_name == null ? '' : str(row.service_name)
 
-                // chatId rules:
-                // - Group chats: use chat.guid (stable routing key)
-                // - Direct chats (DM): prefer database chat_identifier if it already contains a semicolon; otherwise prefix with service_name
-                let chatId: string
-                if (isGroup || !identifierRaw) {
-                    chatId = guid
-                } else if (identifierRaw.includes(';')) {
-                    chatId = identifierRaw
-                } else if (service) {
-                    chatId = `${service};${identifierRaw}`
-                } else {
-                    // In rare cases service_name is missing, default to iMessage prefix for consistency
-                    chatId = `iMessage;${identifierRaw}`
-                }
+                const chatId = resolveChatId(guid, identifierRaw, service)
 
                 const displayName = row.display_name == null ? null : str(row.display_name)
                 const lastDateRaw = row.last_date
@@ -513,13 +522,19 @@ export class IMessageDatabase {
         // Parse reaction information
         const reaction = this.mapReactionType(row.associated_message_type)
 
+        const chatId = resolveChatId(
+            str(row.chat_guid),
+            str(row.chat_id),
+            str(row.chat_service)
+        )
+
         return {
             id: str(row.id),
             guid: str(row.guid),
             text: messageText,
             sender: str(row.sender, 'Unknown'),
             senderName: null,
-            chatId: str(row.chat_id),
+            chatId,
             isGroupChat: bool(row.is_group_chat),
             service: this.mapService(row.service),
             isRead: bool(row.is_read),
