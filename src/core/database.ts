@@ -29,11 +29,7 @@ const bool = (v: unknown): boolean => Boolean(v)
 // resolveChatId returns the chat identifier used for AppleScript routing.
 // Prefers chat.guid which already carries the service prefix
 // (e.g. "iMessage;+;chat613...") that AppleScript's "chat id" requires.
-function resolveChatId(
-    guid: string,
-    identifier: string,
-    serviceName: string
-): string {
+function resolveChatId(guid: string, identifier: string, serviceName: string): string {
     if (guid) {
         return guid
     }
@@ -522,11 +518,7 @@ export class IMessageDatabase {
         // Parse reaction information
         const reaction = this.mapReactionType(row.associated_message_type)
 
-        const chatId = resolveChatId(
-            str(row.chat_guid),
-            str(row.chat_id),
-            str(row.chat_service)
-        )
+        const chatId = resolveChatId(str(row.chat_guid), str(row.chat_id), str(row.chat_service))
 
         return {
             id: str(row.id),
