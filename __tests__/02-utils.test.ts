@@ -135,18 +135,28 @@ describe('Common Utils', () => {
             expect(() => validateChatId('chat45e2b868ce1e43da89af262922733382')).not.toThrow()
         })
 
-        it('should accept DM format', async () => {
+        it('should accept legacy DM format', async () => {
             const { validateChatId } = await import('../src/utils/common')
 
             expect(() => validateChatId('iMessage;+1234567890')).not.toThrow()
             expect(() => validateChatId('SMS;+1234567890')).not.toThrow()
             expect(() => validateChatId('iMessage;user@example.com')).not.toThrow()
+            expect(() => validateChatId('any;+1234567890')).not.toThrow()
         })
 
-        it('should accept AppleScript group format', async () => {
+        it('should accept 3-part DM format (macOS Tahoe)', async () => {
+            const { validateChatId } = await import('../src/utils/common')
+
+            expect(() => validateChatId('any;-;+1234567890')).not.toThrow()
+            expect(() => validateChatId('any;-;user@example.com')).not.toThrow()
+            expect(() => validateChatId('iMessage;-;+1234567890')).not.toThrow()
+        })
+
+        it('should accept group format (legacy and Tahoe)', async () => {
             const { validateChatId } = await import('../src/utils/common')
 
             expect(() => validateChatId('iMessage;+;chat61321855167474084')).not.toThrow()
+            expect(() => validateChatId('any;+;chat687179757169191512')).not.toThrow()
             expect(() => validateChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).not.toThrow()
         })
 
@@ -158,24 +168,67 @@ describe('Common Utils', () => {
             expect(() => validateChatId('iMessage;+;chat123')).toThrow('Invalid chatId format: GUID too short')
             expect(() => validateChatId('InvalidService;+1234567890')).toThrow('Invalid chatId format')
             expect(() => validateChatId('iMessage;')).toThrow('Invalid chatId format')
+            expect(() => validateChatId('any;-;')).toThrow('Invalid chatId format: missing address')
+            expect(() => validateChatId('a;b;c')).toThrow('Invalid chatId format: unrecognized semicolon pattern')
         })
     })
 
     describe('normalizeChatId', () => {
-        it('should normalize AppleScript group format to GUID', async () => {
+        it('should strip service prefix from group chatIds', async () => {
             const { normalizeChatId } = await import('../src/utils/common')
 
             expect(normalizeChatId('iMessage;+;chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).toBe(
-                'chat45e2b868ce1e43da89af262922733382'
-            )
+            expect(normalizeChatId('any;+;chat687179757169191512')).toBe('chat687179757169191512')
         })
 
-        it('should return unchanged for other formats', async () => {
+        it('should return unchanged for non-group formats', async () => {
             const { normalizeChatId } = await import('../src/utils/common')
 
             expect(normalizeChatId('chat61321855167474084')).toBe('chat61321855167474084')
             expect(normalizeChatId('iMessage;+1234567890')).toBe('iMessage;+1234567890')
+            expect(normalizeChatId('any;-;+1234567890')).toBe('any;-;+1234567890')
+        })
+    })
+
+    describe('isGroupChatId', () => {
+        it('should detect group formats', async () => {
+            const { isGroupChatId } = await import('../src/utils/common')
+
+            expect(isGroupChatId('iMessage;+;chat61321855167474084')).toBe(true)
+            expect(isGroupChatId('any;+;chat687179757169191512')).toBe(true)
+            expect(isGroupChatId('chat493787071395575843')).toBe(true)
+        })
+
+        it('should reject non-group formats', async () => {
+            const { isGroupChatId } = await import('../src/utils/common')
+
+            expect(isGroupChatId('any;-;+1234567890')).toBe(false)
+            expect(isGroupChatId('iMessage;+1234567890')).toBe(false)
+            expect(isGroupChatId('+1234567890')).toBe(false)
+        })
+    })
+
+    describe('extractRecipientFromChatId', () => {
+        it('should extract from 3-part DM format', async () => {
+            const { extractRecipientFromChatId } = await import('../src/utils/common')
+
+            expect(extractRecipientFromChatId('any;-;+1234567890')).toBe('+1234567890')
+            expect(extractRecipientFromChatId('iMessage;-;user@example.com')).toBe('user@example.com')
+        })
+
+        it('should extract from legacy 2-part DM format', async () => {
+            const { extractRecipientFromChatId } = await import('../src/utils/common')
+
+            expect(extractRecipientFromChatId('iMessage;+1234567890')).toBe('+1234567890')
+            expect(extractRecipientFromChatId('SMS;+1234567890')).toBe('+1234567890')
+        })
+
+        it('should return null for group and bare formats', async () => {
+            const { extractRecipientFromChatId } = await import('../src/utils/common')
+
+            expect(extractRecipientFromChatId('any;+;chat687179757169191512')).toBeNull()
+            expect(extractRecipientFromChatId('chat61321855167474084')).toBeNull()
+            expect(extractRecipientFromChatId('+1234567890')).toBeNull()
         })
     })
 })
