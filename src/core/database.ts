@@ -156,6 +156,8 @@ export class IMessageDatabase {
             handle.id as sender,
             handle.ROWID as sender_rowid,
             chat.chat_identifier as chat_id,
+            chat.guid as chat_guid,
+            chat.service_name as chat_service,
             chat.display_name as chat_name,
             chat.ROWID as chat_rowid,
             (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 as is_group_chat
@@ -513,14 +515,30 @@ export class IMessageDatabase {
         // Parse reaction information
         const reaction = this.mapReactionType(row.associated_message_type)
 
+        // Use same chatId logic as listChats: groups use chat.guid, DMs use chat_identifier
+        const isGroup = bool(row.is_group_chat)
+        const chatGuid = str(row.chat_guid)
+        const chatIdentifier = str(row.chat_id)
+        const chatService = row.chat_service == null ? '' : str(row.chat_service)
+        let resolvedChatId: string
+        if (isGroup || !chatIdentifier) {
+            resolvedChatId = chatGuid || chatIdentifier
+        } else if (chatIdentifier.includes(';')) {
+            resolvedChatId = chatIdentifier
+        } else if (chatService) {
+            resolvedChatId = `${chatService};${chatIdentifier}`
+        } else {
+            resolvedChatId = `iMessage;${chatIdentifier}`
+        }
+
         return {
             id: str(row.id),
             guid: str(row.guid),
             text: messageText,
             sender: str(row.sender, 'Unknown'),
             senderName: null,
-            chatId: str(row.chat_id),
-            isGroupChat: bool(row.is_group_chat),
+            chatId: resolvedChatId,
+            isGroupChat: isGroup,
             service: this.mapService(row.service),
             isRead: bool(row.is_read),
             isFromMe: bool(row.is_from_me),
@@ -600,6 +618,35 @@ export class IMessageDatabase {
     private convertMacTimestamp(timestamp: unknown): Date {
         if (!timestamp || typeof timestamp !== 'number') return new Date()
         return new Date(this.MAC_EPOCH + timestamp / 1000000)
+    }
+
+    /**
+     * Discover the local Messages.app guid prefix for group chats by inspecting one row.
+     * Returns the prefix that should be prepended to raw GUIDs for AppleScript `chat id`.
+     * Defaults to `any;+;` (modern macOS) if no group chats exist.
+     */
+    async discoverGroupChatPrefix(): Promise<string> {
+        await this.ensureInit()
+        try {
+            const row = this.db.prepare('SELECT guid, chat_identifier FROM chat WHERE style = 43 LIMIT 1').get() as
+                | { guid: string; chat_identifier: string }
+                | undefined
+            if (!row) return 'any;+;'
+            const guid = str(row.guid)
+            const identifier = str(row.chat_identifier)
+            // guid is e.g. "any;+;534ce85d..." and identifier is "534ce85d..."
+            const idx = guid.indexOf(identifier)
+            if (idx > 0) return guid.substring(0, idx)
+            // identifier might have extra prefix (e.g., "chat534ce85d...")
+            if (identifier.startsWith('chat') && guid.includes(identifier.substring(4))) {
+                const rawGuid = identifier.substring(4)
+                const rawIdx = guid.indexOf(rawGuid)
+                if (rawIdx > 0) return guid.substring(0, rawIdx)
+            }
+            return 'any;+;'
+        } catch {
+            return 'any;+;'
+        }
     }
 
     /**

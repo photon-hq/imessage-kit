@@ -22,6 +22,11 @@ export interface WatcherEvents {
     onGroupMessage?: MessageCallback
     /** Triggered when error occurs */
     onError?: (error: Error) => void
+    /** How far back (ms) to look for messages when the watcher first starts. Defaults to 10 000. */
+    initialLookbackMs?: number
+    /** Called after each successful poll with the current checkpoint time. Persist this externally
+     *  and pass it back as `initialLookbackMs` on restart to avoid missing messages. */
+    onCheckpoint?: (lastCheckTime: Date) => void
 }
 
 /**
@@ -117,6 +122,7 @@ export class MessageWatcher {
             })
 
             this.lastCheckTime = checkStart
+            this.events.onCheckpoint?.(checkStart)
 
             /** Filter out new messages */
             let newMessages = messages.filter((msg) => !this.seenMessageIds.has(msg.id))
