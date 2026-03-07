@@ -98,6 +98,20 @@ export class IMessageDatabase {
     }
 
     /**
+     * Resolve a chatId from database columns using consistent rules:
+     * - Groups (or missing identifier): use chat.guid, fall back to chat_identifier
+     * - DMs with semicolons already in identifier: use as-is
+     * - DMs with service: prefix with service name
+     * - DMs without service: prefix with "iMessage"
+     */
+    private resolveChatId(isGroup: boolean, chatGuid: string, chatIdentifier: string, chatService: string): string {
+        if (isGroup || !chatIdentifier) return chatGuid || chatIdentifier
+        if (chatIdentifier.includes(';')) return chatIdentifier
+        if (chatService) return `${chatService};${chatIdentifier}`
+        return `iMessage;${chatIdentifier}`
+    }
+
+    /**
      * Query messages (with multiple filter options)
      *
      * @param filter Filter conditions (optional)
@@ -352,24 +366,12 @@ export class IMessageDatabase {
             const rows = this.db.prepare(query).all(...params) as Array<Record<string, unknown>>
             return rows.map((row) => {
                 const isGroup = bool(row.is_group_chat)
-                const guid = str(row.chat_guid)
-                const identifierRaw = row.chat_identifier == null ? '' : str(row.chat_identifier)
-                const service = row.service_name == null ? '' : str(row.service_name)
-
-                // chatId rules:
-                // - Group chats: use chat.guid (stable routing key)
-                // - Direct chats (DM): prefer database chat_identifier if it already contains a semicolon; otherwise prefix with service_name
-                let chatId: string
-                if (isGroup || !identifierRaw) {
-                    chatId = guid
-                } else if (identifierRaw.includes(';')) {
-                    chatId = identifierRaw
-                } else if (service) {
-                    chatId = `${service};${identifierRaw}`
-                } else {
-                    // In rare cases service_name is missing, default to iMessage prefix for consistency
-                    chatId = `iMessage;${identifierRaw}`
-                }
+                const chatId = this.resolveChatId(
+                    isGroup,
+                    str(row.chat_guid),
+                    row.chat_identifier == null ? '' : str(row.chat_identifier),
+                    row.service_name == null ? '' : str(row.service_name)
+                )
 
                 const displayName = row.display_name == null ? null : str(row.display_name)
                 const lastDateRaw = row.last_date
@@ -515,21 +517,13 @@ export class IMessageDatabase {
         // Parse reaction information
         const reaction = this.mapReactionType(row.associated_message_type)
 
-        // Use same chatId logic as listChats: groups use chat.guid, DMs use chat_identifier
         const isGroup = bool(row.is_group_chat)
-        const chatGuid = str(row.chat_guid)
-        const chatIdentifier = str(row.chat_id)
-        const chatService = row.chat_service == null ? '' : str(row.chat_service)
-        let resolvedChatId: string
-        if (isGroup || !chatIdentifier) {
-            resolvedChatId = chatGuid || chatIdentifier
-        } else if (chatIdentifier.includes(';')) {
-            resolvedChatId = chatIdentifier
-        } else if (chatService) {
-            resolvedChatId = `${chatService};${chatIdentifier}`
-        } else {
-            resolvedChatId = `iMessage;${chatIdentifier}`
-        }
+        const resolvedChatId = this.resolveChatId(
+            isGroup,
+            str(row.chat_guid),
+            str(row.chat_id),
+            row.chat_service == null ? '' : str(row.chat_service)
+        )
 
         return {
             id: str(row.id),

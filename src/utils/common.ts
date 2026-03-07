@@ -136,15 +136,25 @@ export function validateChatId(chatId: string): void {
 /**
  * Build a full Messages.app guid for a group chat using the discovered prefix.
  * Strips any existing prefixes and reconstructs with the local format.
+ * Defensively avoids duplicating GUID segments if the prefix already overlaps.
  * @param rawChatId Chat identifier in any format
  * @param discoveredPrefix The prefix discovered from chat.db at init (e.g., "any;+;" or "iMessage;+;chat")
  */
 export function buildGroupChatGuid(rawChatId: string, discoveredPrefix: string): string {
+    // Extract the bare GUID (no service prefix, no "chat" prefix)
     let guid = rawChatId
     if (guid.includes(';')) {
         const parts = guid.split(';')
         guid = parts[parts.length - 1] ?? guid
     }
     if (guid.startsWith('chat')) guid = guid.substring(4)
-    return `${discoveredPrefix}${guid}`
+
+    // If the result already matches what we'd produce, return rawChatId as-is
+    const expected = `${discoveredPrefix}${guid}`
+    if (rawChatId === expected) return rawChatId
+
+    // Guard against a malformed prefix that already contains the GUID
+    if (discoveredPrefix.endsWith(guid)) return discoveredPrefix
+
+    return expected
 }

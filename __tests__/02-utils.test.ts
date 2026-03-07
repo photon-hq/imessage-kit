@@ -162,20 +162,26 @@ describe('Common Utils', () => {
     })
 
     describe('normalizeChatId', () => {
-        it('should normalize AppleScript group format to GUID', async () => {
+        it('should extract core identifier from semicolon formats', async () => {
             const { normalizeChatId } = await import('../src/utils/common')
 
             expect(normalizeChatId('iMessage;+;chat61321855167474084')).toBe('chat61321855167474084')
             expect(normalizeChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).toBe(
                 'chat45e2b868ce1e43da89af262922733382'
             )
+            expect(normalizeChatId('any;+;534ce85d174c4709b8e84075f9078b04')).toBe(
+                '534ce85d174c4709b8e84075f9078b04'
+            )
+            expect(normalizeChatId('any;-;+1234567890')).toBe('+1234567890')
+            expect(normalizeChatId('iMessage;+1234567890')).toBe('+1234567890')
         })
 
-        it('should return unchanged for other formats', async () => {
+        it('should return unchanged for bare formats', async () => {
             const { normalizeChatId } = await import('../src/utils/common')
 
             expect(normalizeChatId('chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('iMessage;+1234567890')).toBe('iMessage;+1234567890')
+            expect(normalizeChatId('+1234567890')).toBe('+1234567890')
+            expect(normalizeChatId('534ce85d174c4709b8e84075f9078b04')).toBe('534ce85d174c4709b8e84075f9078b04')
         })
     })
 })
