@@ -33,6 +33,9 @@ function resolveChatId(guid: string, identifier: string, serviceName: string): s
     if (guid) {
         return guid
     }
+    if (!identifier) {
+        return ''
+    }
     if (identifier.includes(';')) {
         return identifier
     }
@@ -200,8 +203,8 @@ export class IMessageDatabase {
         }
 
         if (chatId) {
-            query += ' AND chat.chat_identifier = ?'
-            params.push(chatId)
+            query += ' AND (chat.chat_identifier = ? OR chat.guid = ?)'
+            params.push(chatId, chatId)
         }
 
         if (service) {
