@@ -98,6 +98,20 @@ export class IMessageDatabase {
     }
 
     /**
+     * Resolve a chatId from database columns using consistent rules:
+     * - Groups (or missing identifier): use chat.guid, fall back to chat_identifier
+     * - DMs with semicolons already in identifier: use as-is
+     * - DMs with service: prefix with service name
+     * - DMs without service: prefix with "iMessage"
+     */
+    private resolveChatId(isGroup: boolean, chatGuid: string, chatIdentifier: string, chatService: string): string {
+        if (isGroup || !chatIdentifier) return chatGuid || chatIdentifier
+        if (chatIdentifier.includes(';')) return chatIdentifier
+        if (chatService) return `${chatService};${chatIdentifier}`
+        return `iMessage;${chatIdentifier}`
+    }
+
+    /**
      * Query messages (with multiple filter options)
      *
      * @param filter Filter conditions (optional)
@@ -156,6 +170,8 @@ export class IMessageDatabase {
             handle.id as sender,
             handle.ROWID as sender_rowid,
             chat.chat_identifier as chat_id,
+            chat.guid as chat_guid,
+            chat.service_name as chat_service,
             chat.display_name as chat_name,
             chat.ROWID as chat_rowid,
             (SELECT COUNT(*) FROM chat_handle_join WHERE chat_handle_join.chat_id = chat.ROWID) > 1 as is_group_chat
@@ -350,24 +366,12 @@ export class IMessageDatabase {
             const rows = this.db.prepare(query).all(...params) as Array<Record<string, unknown>>
             return rows.map((row) => {
                 const isGroup = bool(row.is_group_chat)
-                const guid = str(row.chat_guid)
-                const identifierRaw = row.chat_identifier == null ? '' : str(row.chat_identifier)
-                const service = row.service_name == null ? '' : str(row.service_name)
-
-                // chatId rules:
-                // - Group chats: use chat.guid (stable routing key)
-                // - Direct chats (DM): prefer database chat_identifier if it already contains a semicolon; otherwise prefix with service_name
-                let chatId: string
-                if (isGroup || !identifierRaw) {
-                    chatId = guid
-                } else if (identifierRaw.includes(';')) {
-                    chatId = identifierRaw
-                } else if (service) {
-                    chatId = `${service};${identifierRaw}`
-                } else {
-                    // In rare cases service_name is missing, default to iMessage prefix for consistency
-                    chatId = `iMessage;${identifierRaw}`
-                }
+                const chatId = this.resolveChatId(
+                    isGroup,
+                    str(row.chat_guid),
+                    row.chat_identifier == null ? '' : str(row.chat_identifier),
+                    row.service_name == null ? '' : str(row.service_name)
+                )
 
                 const displayName = row.display_name == null ? null : str(row.display_name)
                 const lastDateRaw = row.last_date
@@ -513,14 +517,22 @@ export class IMessageDatabase {
         // Parse reaction information
         const reaction = this.mapReactionType(row.associated_message_type)
 
+        const isGroup = bool(row.is_group_chat)
+        const resolvedChatId = this.resolveChatId(
+            isGroup,
+            str(row.chat_guid),
+            str(row.chat_id),
+            row.chat_service == null ? '' : str(row.chat_service)
+        )
+
         return {
             id: str(row.id),
             guid: str(row.guid),
             text: messageText,
             sender: str(row.sender, 'Unknown'),
             senderName: null,
-            chatId: str(row.chat_id),
-            isGroupChat: bool(row.is_group_chat),
+            chatId: resolvedChatId,
+            isGroupChat: isGroup,
             service: this.mapService(row.service),
             isRead: bool(row.is_read),
             isFromMe: bool(row.is_from_me),
@@ -600,6 +612,35 @@ export class IMessageDatabase {
     private convertMacTimestamp(timestamp: unknown): Date {
         if (!timestamp || typeof timestamp !== 'number') return new Date()
         return new Date(this.MAC_EPOCH + timestamp / 1000000)
+    }
+
+    /**
+     * Discover the local Messages.app guid prefix for group chats by inspecting one row.
+     * Returns the prefix that should be prepended to raw GUIDs for AppleScript `chat id`.
+     * Defaults to `any;+;` (modern macOS) if no group chats exist.
+     */
+    async discoverGroupChatPrefix(): Promise<string> {
+        await this.ensureInit()
+        try {
+            const row = this.db.prepare('SELECT guid, chat_identifier FROM chat WHERE style = 43 LIMIT 1').get() as
+                | { guid: string; chat_identifier: string }
+                | undefined
+            if (!row) return 'any;+;'
+            const guid = str(row.guid)
+            const identifier = str(row.chat_identifier)
+            // guid is e.g. "any;+;534ce85d..." and identifier is "534ce85d..."
+            const idx = guid.indexOf(identifier)
+            if (idx > 0) return guid.substring(0, idx)
+            // identifier might have extra prefix (e.g., "chat534ce85d...")
+            if (identifier.startsWith('chat') && guid.includes(identifier.substring(4))) {
+                const rawGuid = identifier.substring(4)
+                const rawIdx = guid.indexOf(rawGuid)
+                if (rawIdx > 0) return guid.substring(0, rawIdx)
+            }
+            return 'any;+;'
+        } catch {
+            return 'any;+;'
+        }
     }
 
     /**

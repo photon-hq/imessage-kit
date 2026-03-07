@@ -19,7 +19,7 @@ import {
     generateSendWithAttachmentScript,
     generateSendWithAttachmentToChat,
 } from '../utils/applescript'
-import { delay, validateChatId, validateMessageContent } from '../utils/common'
+import { buildGroupChatGuid, delay, validateChatId, validateMessageContent } from '../utils/common'
 import { convertToCompatibleFormat, downloadImage } from '../utils/download'
 import { Semaphore } from '../utils/semaphore'
 import { IMessageError, SendError } from './errors'
@@ -73,6 +73,8 @@ export class MessageSender {
     private readonly scriptTimeout: number
     /** Outgoing message manager */
     private outgoingManager: OutgoingMessageManager | null = null
+    /** Discovered group chat guid prefix for AppleScript (e.g., "any;+;") */
+    private groupChatPrefix = 'any;+;'
 
     constructor(debug = false, retryConfig?: Required<RetryConfig>, maxConcurrent = 5, scriptTimeout = 30000) {
         this.debug = debug
@@ -80,6 +82,13 @@ export class MessageSender {
         this.retryDelay = retryConfig?.delay ?? 1500
         this.semaphore = maxConcurrent > 0 ? new Semaphore(maxConcurrent) : null
         this.scriptTimeout = scriptTimeout
+    }
+
+    /**
+     * Set the group chat guid prefix discovered from the local Messages database.
+     */
+    setGroupChatPrefix(prefix: string): void {
+        this.groupChatPrefix = prefix
     }
 
     /**
@@ -359,32 +368,32 @@ export class MessageSender {
         hasText: boolean,
         resolvedPaths: string[]
     ): Promise<void> {
-        if (hasText && resolvedPaths.length > 0) {
-            // Strategy 1: Text + Attachments
-            const firstAttachment = resolvedPaths[0]!
-            const { script } = generateSendWithAttachmentToChat(groupId, text!, firstAttachment)
-            await this.executeWithRetry(script, `Send text and attachment to group ${groupId}`)
+        const normalizedId = buildGroupChatGuid(groupId, this.groupChatPrefix)
 
-            // Send remaining attachments
+        if (hasText && resolvedPaths.length > 0) {
+            const firstAttachment = resolvedPaths[0]!
+            const { script } = generateSendWithAttachmentToChat(normalizedId, text!, firstAttachment)
+            await this.executeWithRetry(script, `Send text and attachment to group ${normalizedId}`)
+
             for (let i = 1; i < resolvedPaths.length; i++) {
-                const { script: attachScript } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
+                const { script: attachScript } = generateSendAttachmentToChat(
+                    normalizedId,
+                    resolvedPaths[i]!,
+                    this.debug
+                )
                 await this.executeWithRetry(attachScript, `Send attachment ${i + 1}/${resolvedPaths.length}`)
-                // Extra delay between attachments
                 if (i < resolvedPaths.length - 1) {
                     await delay(500)
                 }
             }
         } else if (hasText) {
-            // Strategy 2: Text only
-            const script = generateSendTextToChat(groupId, text!)
-            await this.executeWithRetry(script, `Send text to group ${groupId}`)
+            const script = generateSendTextToChat(normalizedId, text!)
+            await this.executeWithRetry(script, `Send text to group ${normalizedId}`)
         } else {
-            // Strategy 3: Attachments only
             for (let i = 0; i < resolvedPaths.length; i++) {
-                const { script } = generateSendAttachmentToChat(groupId, resolvedPaths[i]!, this.debug)
-                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to group ${groupId}`
+                const { script } = generateSendAttachmentToChat(normalizedId, resolvedPaths[i]!, this.debug)
+                const description = `Send attachment ${i + 1}/${resolvedPaths.length} to group ${normalizedId}`
                 await this.executeWithRetry(script, description)
-                // Extra delay between attachments to ensure previous one is sent
                 if (i < resolvedPaths.length - 1) {
                     await delay(500)
                 }

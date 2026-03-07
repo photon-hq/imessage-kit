@@ -112,6 +112,21 @@ export class IMessageSDK {
             }
         }
 
+        // Discover the local group chat guid prefix (async, non-blocking)
+        this.database
+            .discoverGroupChatPrefix()
+            .then((prefix) => {
+                if ('setGroupChatPrefix' in this.sender && typeof this.sender.setGroupChatPrefix === 'function') {
+                    this.sender.setGroupChatPrefix(prefix)
+                }
+                if (this.config.debug) {
+                    console.log(`[SDK] Discovered group chat prefix: "${prefix}"`)
+                }
+            })
+            .catch(() => {
+                // Non-fatal: falls back to default "any;+;"
+            })
+
         if (this.config.debug) {
             console.log('[SDK] Initialization complete')
         }
@@ -514,7 +529,8 @@ export class IMessageSDK {
             events,
             this.pluginManager,
             this.config.debug,
-            this.outgoingManager
+            this.outgoingManager,
+            events?.initialLookbackMs
         )
 
         try {

@@ -1,0 +1,57 @@
+╔════════════════════════════════════════════════════════════╗
+║                    CODEGRAPH SUMMARY                       ║
+╚════════════════════════════════════════════════════════════╝
+
+METRICS:
+  Total nodes:              269
+  Total edges:              554
+  Total functions:          181
+  Avg impact score:         4
+  Max impact score:         65
+  Cross-service links:      0
+
+NODES BY TYPE:
+  module: 60
+  kafka-producer: 13
+  function: 181
+  class: 15
+
+HIGH IMPACT FUNCTIONS (most dependents):
+  loggerPlugin.log
+    Impact: 65 transitive, 35 direct callers
+    Location: src/plugins/logger.ts:87
+  escapeAppleScriptString
+    Impact: 33 transitive, 10 direct callers
+    Location: src/utils/applescript.ts:166
+  MessagePromise.resolve
+    Impact: 28 transitive, 7 direct callers
+    Location: src/core/message-promise.ts:107
+  calculateFileDelay
+    Impact: 25 transitive, 4 direct callers
+    Location: src/utils/applescript.ts:262
+  SendError
+    Impact: 22 transitive, 8 direct callers
+    Location: src/core/errors.ts:38
+  MessageScheduler.get
+    Impact: 20 transitive, 4 direct callers
+    Location: src/utils/scheduler.ts:342
+  buildTempFilenameTemplate
+    Impact: 19 transitive, 2 direct callers
+    Location: src/utils/applescript.ts:246
+  needsSandboxBypass
+    Impact: 17 transitive, 4 direct callers
+    Location: src/utils/applescript.ts:221
+  delay
+    Impact: 17 transitive, 4 direct callers
+    Location: src/utils/common.ts:9
+  generateSecureFilename
+    Impact: 17 transitive, 3 direct callers
+    Location: src/utils/download.ts:20
+
+⚠ LOW TYPE COVERAGE (<50%):
+  str: 33%
+  num: 33%
+  PlatformError: 33%
+
+────────────────────────────────────────────────────────────
+Estimated tokens: ~410
