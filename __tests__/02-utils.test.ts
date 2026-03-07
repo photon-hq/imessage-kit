@@ -169,9 +169,7 @@ describe('Common Utils', () => {
             expect(normalizeChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).toBe(
                 'chat45e2b868ce1e43da89af262922733382'
             )
-            expect(normalizeChatId('any;+;534ce85d174c4709b8e84075f9078b04')).toBe(
-                '534ce85d174c4709b8e84075f9078b04'
-            )
+            expect(normalizeChatId('any;+;534ce85d174c4709b8e84075f9078b04')).toBe('534ce85d174c4709b8e84075f9078b04')
             expect(normalizeChatId('any;-;+1234567890')).toBe('+1234567890')
             expect(normalizeChatId('iMessage;+1234567890')).toBe('+1234567890')
         })
