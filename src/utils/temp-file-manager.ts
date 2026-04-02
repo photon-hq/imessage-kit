@@ -38,6 +38,8 @@ export interface TempFileManagerConfig {
 export class TempFileManager {
     private readonly config: Required<TempFileManagerConfig>
     private cleanupTimer: NodeJS.Timeout | null = null
+    private destroyPromise: Promise<void> | null = null
+    private isDestroying = false
     private isDestroyed = false
 
     constructor(config: TempFileManagerConfig = {}) {
@@ -52,7 +54,7 @@ export class TempFileManager {
      * Start cleanup task
      */
     start(): void {
-        if (this.isDestroyed) {
+        if (this.isDestroyed || this.isDestroying) {
             throw new Error('TempFileManager is destroyed, cannot start')
         }
 
@@ -160,7 +162,7 @@ export class TempFileManager {
      * Called when SDK is destroyed, immediately clean all imsg_temp_* files
      */
     async cleanupAll(): Promise<{ removed: number; errors: number }> {
-        if (this.isDestroyed) {
+        if (this.isDestroyed && !this.isDestroying) {
             return { removed: 0, errors: 0 }
         }
 
@@ -234,15 +236,32 @@ export class TempFileManager {
             return
         }
 
-        this.stop()
+        if (this.destroyPromise) {
+            await this.destroyPromise
+            return
+        }
 
-        // Clean up all temp files
-        await this.cleanupAll()
+        this.destroyPromise = (async () => {
+            this.isDestroying = true
+            this.stop()
 
-        this.isDestroyed = true
+            try {
+                // Clean up all temp files
+                await this.cleanupAll()
+            } finally {
+                this.isDestroyed = true
+                this.isDestroying = false
 
-        if (this.config.debug) {
-            console.log('[TempFileManager] Destroyed')
+                if (this.config.debug) {
+                    console.log('[TempFileManager] Destroyed')
+                }
+            }
+        })()
+
+        try {
+            await this.destroyPromise
+        } finally {
+            this.destroyPromise = null
         }
     }
 
