@@ -54,7 +54,11 @@ export class TempFileManager {
      * Start cleanup task
      */
     start(): void {
-        if (this.isDestroyed || this.isDestroying) {
+        if (this.isDestroying) {
+            throw new Error('TempFileManager is destroying, cannot start')
+        }
+
+        if (this.isDestroyed) {
             throw new Error('TempFileManager is destroyed, cannot start')
         }
 
@@ -162,7 +166,7 @@ export class TempFileManager {
      * Called when SDK is destroyed, immediately clean all imsg_temp_* files
      */
     async cleanupAll(): Promise<{ removed: number; errors: number }> {
-        if (this.isDestroyed && !this.isDestroying) {
+        if (this.isDestroyed) {
             return { removed: 0, errors: 0 }
         }
 

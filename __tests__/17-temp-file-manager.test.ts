@@ -1,44 +1,50 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
 import { TempFileManager } from '../src/utils/temp-file-manager'
 
 describe('TempFileManager destroy flow', () => {
-    it('should clean temp files before marking the manager destroyed', () => {
-        const source = readFileSync(new URL('../src/utils/temp-file-manager.ts', import.meta.url), 'utf-8')
+    it('should keep the manager active until cleanup finishes', async () => {
+        const manager = new TempFileManager()
+        let destroyedDuringCleanup: boolean | null = null
+        let destroyingDuringCleanup: boolean | null = null
 
-        const destroyMatch = source.match(/async\s+destroy\s*\(\s*\)\s*:\s*Promise<void>\s*\{/)
-        const destroyStart = destroyMatch?.index ?? -1
-
-        expect(destroyStart).toBeGreaterThanOrEqual(0)
-
-        const bodyStart = source.indexOf('{', destroyStart)
-        expect(bodyStart).toBeGreaterThanOrEqual(0)
-
-        let depth = 0
-        let destroyEnd = -1
-        for (let i = bodyStart; i < source.length; i++) {
-            const char = source[i]
-            if (char === '{') {
-                depth++
-            } else if (char === '}') {
-                depth--
-                if (depth === 0) {
-                    destroyEnd = i
-                    break
-                }
+        ;(
+            manager as TempFileManager & {
+                cleanupAll: () => Promise<{ removed: number; errors: number }>
+                isDestroyed: boolean
+                isDestroying: boolean
             }
+        ).cleanupAll = async () => {
+            destroyedDuringCleanup = (
+                manager as TempFileManager & {
+                    isDestroyed: boolean
+                }
+            ).isDestroyed
+            destroyingDuringCleanup = (
+                manager as TempFileManager & {
+                    isDestroying: boolean
+                }
+            ).isDestroying
+            return { removed: 0, errors: 0 }
         }
 
-        expect(destroyEnd).toBeGreaterThan(bodyStart)
+        await manager.destroy()
 
-        const destroySource = source.slice(bodyStart, destroyEnd)
-        const stopIndex = destroySource.indexOf('this.stop()')
-        const cleanupIndex = destroySource.indexOf('await this.cleanupAll()')
-        const destroyedIndex = destroySource.lastIndexOf('this.isDestroyed = true')
-
-        expect(stopIndex).toBeGreaterThanOrEqual(0)
-        expect(cleanupIndex).toBeGreaterThan(stopIndex)
-        expect(destroyedIndex).toBeGreaterThan(cleanupIndex)
+        expect(destroyedDuringCleanup).toBe(false)
+        expect(destroyingDuringCleanup).toBe(true)
+        expect(
+            (
+                manager as TempFileManager & {
+                    isDestroyed: boolean
+                }
+            ).isDestroyed
+        ).toBe(true)
+        expect(
+            (
+                manager as TempFileManager & {
+                    isDestroying: boolean
+                }
+            ).isDestroying
+        ).toBe(false)
     })
 
     it('should block start and reuse the same destroy operation while cleanup is in progress', async () => {
@@ -62,7 +68,7 @@ describe('TempFileManager destroy flow', () => {
         const destroy2 = manager.destroy()
 
         expect(cleanupCalls).toBe(1)
-        expect(() => manager.start()).toThrow('TempFileManager is destroyed, cannot start')
+        expect(() => manager.start()).toThrow('TempFileManager is destroying, cannot start')
         expect(resolveCleanup).not.toBeNull()
 
         resolveCleanup?.()
