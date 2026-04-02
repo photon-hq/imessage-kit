@@ -234,11 +234,12 @@ export class TempFileManager {
             return
         }
 
-        this.isDestroyed = true
         this.stop()
 
         // Clean up all temp files
         await this.cleanupAll()
+
+        this.isDestroyed = true
 
         if (this.config.debug) {
             console.log('[TempFileManager] Destroyed')
