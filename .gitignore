@@ -16,6 +16,7 @@ build/
 *.pem
 *.key
 .npmrc
+service-account.json
 
 # Logs
 logs/

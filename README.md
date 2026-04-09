@@ -558,6 +558,155 @@ use context7: photon-hq/imessage-kit
 
 ---
 
+## Example: PennEats — Penn Dining iMessage Agent
+
+A full iMessage AI agent built on top of this SDK. Students at Penn text it naturally and get real-time dining info, live menus, and community reviews — all without opening an app.
+
+> **Live database (Google Sheets):** [DininGuru Database](https://docs.google.com/spreadsheets/d/1XBS3fi3q51nRGuuQT0ExQ2xYXK1PeHPmBAGTI7oNzyo/edit?usp=sharing)
+
+### What it does
+
+| Capability | Example |
+|---|---|
+| Real-time venue hours | "What's open right now?" |
+| Today's & tomorrow's menus | "What's for dinner at Hill House?" |
+| Community reviews | "What's good at 1920 Commons?" |
+| Review collection | "the Mongolian chicken at English House was amazing" → saved as 5/5 automatically |
+| Meal follow-ups | User says "heading to 1920 for dinner" → bot texts back ~15 min after to collect a review |
+| Multi-day schedule | "What's open Friday?" |
+
+### Architecture
+
+```
+agent/
+├── bot.ts              # Entry point — iMessage watcher & per-sender message queue
+├── agent.ts            # Gemini tool-calling loop (up to 6 iterations per message)
+├── config.ts           # 15 Penn dining venues with Bon Appétit slugs & IDs
+├── prompts/
+│   └── system.ts       # System prompt (built fresh per request — date/time aware)
+├── tools/
+│   ├── venues.ts       # Scrapes Bon Appétit for live hours + menus
+│   ├── reviews.ts      # Reads/writes reviews from Google Sheets
+│   ├── followup.ts     # Schedules post-meal follow-up iMessages
+│   └── state.ts        # Per-user conversation state (Google Sheets)
+└── db/
+    └── sheets.ts       # Google Sheets client (service account auth)
+```
+
+**LLM:** Google Gemini 2.5 Flash via `@google/genai`
+
+**Data sources:**
+- [Bon Appétit / CafeBonAppetit](https://university-of-pennsylvania.cafebonappetit.com) — live hours and full menus, scraped per-request from HTML (Bamco JS variables)
+- Google Sheets — reviews, pending follow-ups, conversation state
+
+> **Note on data sources:** Penn Dining's REST API (`/api/dining/venues/`) was decommissioned in early 2026. Hours and menus are now sourced entirely from Bon Appétit's public HTML pages.
+
+### Google Sheets database
+
+Three tabs:
+
+**`reviews`**
+| timestamp | phone\_hash | venue | date | meal\_period | rating | comment | food\_highlights |
+|---|---|---|---|---|---|---|---|
+| 2026-04-09T20:57:57Z | 9ff02c1a… | English House | 2026-04-09 | Lunch | 5 | the Mongolian chicken was 5/5 | Mongolian chicken |
+
+Phone numbers are stored as a one-way SHA-256 hash — raw numbers are never persisted.
+
+**`pending_followups`** — `id | phone_hash | venue | meal_period | date | scheduled_for | status`
+Status: `pending` → `sent` → `responded`
+
+**`conversation_state`** — `phone_hash | state | context_json | updated_at`
+State: `idle` | `awaiting_review`
+
+### Review flow
+
+No forms, no star ratings. The agent infers a 1–5 score from the user's natural language:
+
+| Message | Inferred rating |
+|---|---|
+| "the ramen was incredible" | 5/5 |
+| "English House was pretty solid" | 3/5 |
+| "Hill House dinner was meh" | 2/5 |
+
+If the user just says "I went to 1920" with no sentiment, the agent asks "How was it?" and saves on the next reply.
+
+### Running locally
+
+#### Prerequisites
+
+- macOS with iMessage signed in
+- Node.js ≥ 18 (uses `tsx` for TypeScript)
+- Terminal with **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access)
+- Messages automation permission (macOS prompts on first send)
+
+#### 1. Google Sheets setup
+
+1. Create a spreadsheet with three tabs: `reviews`, `pending_followups`, `conversation_state`
+2. Add the column headers shown in the table above to row 1 of each tab
+3. Copy the spreadsheet ID from the URL: `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`
+
+Or use the existing database: [DininGuru Database](https://docs.google.com/spreadsheets/d/1XBS3fi3q51nRGuuQT0ExQ2xYXK1PeHPmBAGTI7oNzyo/edit?usp=sharing)
+
+#### 2. Google service account
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → create or select a project
+2. Enable the **Google Sheets API**
+3. IAM & Admin → Service Accounts → Create Service Account (no roles needed)
+4. Keys → Add Key → Create New Key → JSON → download
+5. Save as `agent/service-account.json` (gitignored — never commit)
+6. Share your spreadsheet with the service account's `client_email` as **Editor**
+
+#### 3. Get a Gemini API key
+
+Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+#### 4. Configure `.env`
+
+```bash
+cd agent
+cp .env.example .env   # or create manually
+```
+
+```env
+# Google Gemini
+GEMINI_API_KEY=AIza...
+
+# Google Sheets
+GOOGLE_SHEET_ID=1XBS3fi3q51nRGuuQT0ExQ2xYXK1PeHPmBAGTI7oNzyo
+GOOGLE_SERVICE_ACCOUNT_PATH=./service-account.json
+```
+
+#### 5. Install & run
+
+```bash
+cd agent
+npm install
+npm start        # production
+npm run dev      # watch mode (auto-restarts on file changes)
+```
+
+The bot starts polling your Mac's iMessage inbox every 3 seconds. Text the iMessage number/Apple ID that's signed in on the Mac to start a conversation.
+
+**Test messages to try:**
+```
+"what's open right now?"
+"what's for dinner at Hill House tonight?"
+"heading to 1920 for lunch"
+"the stir fry at English House was amazing"
+"what's good tomorrow?"
+```
+
+#### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `unable to open database file` | Grant Full Disk Access to your terminal app |
+| Bot starts but doesn't receive messages | Make sure you're texting the Mac's iMessage number/Apple ID, not a Twilio or old number |
+| Replies say "Sorry, I couldn't process that" | Check `GEMINI_API_KEY` is valid; inspect terminal logs for tool errors |
+| Menus return empty | Bon Appétit may not have posted tomorrow's menu yet; try asking for today |
+
+---
+
 ## License
 
 [MIT License](./LICENSE)
