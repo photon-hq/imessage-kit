@@ -131,7 +131,7 @@ export function parseAtExpression(expression: string, now = new Date()): Date {
         const targetDay = WEEKDAYS.indexOf(parts[0] as (typeof WEEKDAYS)[number])
         const currentDay = now.getDay()
         const rawDiff = targetDay - currentDay
-        const daysUntil = rawDiff <= 0 ? rawDiff + 7 : rawDiff
+        const daysUntil = rawDiff < 0 ? rawDiff + 7 : rawDiff
 
         targetDate.setDate(targetDate.getDate() + daysUntil)
         timeStr = parts.slice(1).join(' ')

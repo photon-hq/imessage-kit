@@ -182,6 +182,12 @@ export const macos26Queries: MessagesDbQueries = {
             params.push(toMacTimestampNs(filter.before))
         }
 
+        if (filter.search) {
+            const escaped = escapeLikePattern(filter.search)
+            conditions.push("message.text LIKE ? ESCAPE '\\'")
+            params.push(`%${escaped}%`)
+        }
+
         const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
         const hasLimit = filter.limit != null && filter.limit > 0

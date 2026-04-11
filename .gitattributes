@@ -1,5 +1,5 @@
 # Normalize line endings
 * text=auto
 
-# Lock file — force manual conflict resolution
-bun.lock -merge
+# Lock file — prevent auto-merge corruption
+bun.lock binary

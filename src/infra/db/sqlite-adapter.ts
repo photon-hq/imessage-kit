@@ -95,13 +95,13 @@ export class SqliteClient {
     close(): void {
         if (this.closed) return
 
-        this.closed = true
-
         try {
             this.db.close()
         } catch (error) {
             const cause = toError(error)
             throw DatabaseError(`Failed to close database: ${cause.message}`, cause)
         }
+
+        this.closed = true
     }
 }
