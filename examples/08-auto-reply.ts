@@ -9,11 +9,11 @@ await sdk.startWatching({
             .matchText(/hello/i)
             .replyText('Hi there!')
             .execute()
-    }
+    },
 })
 
 process.on('SIGINT', async () => {
-    await sdk.stopWatching()
+    sdk.stopWatching()
     await sdk.close()
     process.exit(0)
 })

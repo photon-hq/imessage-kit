@@ -1,22 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { IMessageDatabase } from '../src/core/database'
-import { IMessageSDK } from '../src/core/sdk'
 import {
     attachmentExists,
-    downloadAttachment,
+    copyAttachmentFile,
     getAttachmentExtension,
+    getAttachmentFileInfo,
     getAttachmentSize,
     isImageAttachment,
-} from '../src/helpers/attachment'
+    readAttachmentBytes,
+} from '../src/infra/attachments'
+import { IMessageSDK } from '../src/sdk'
 import { cleanupTempDir, createMockDatabase, insertTestMessage } from './setup'
 
 // Mock platform
-mock.module('../src/utils/platform', () => ({
+mock.module('../src/infra/platform', () => ({
     requireMacOS: () => {},
-    isMacOS: () => true,
     getDefaultDatabasePath: () => '/mock/path/chat.db',
+    getDarwinMajorVersion: () => 24,
 }))
 
 describe('Message Search', () => {
@@ -54,36 +55,36 @@ describe('Message Search', () => {
     })
 
     it('searches messages by text content', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
-        const results = await sdk.getMessages({ search: 'meeting' })
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+        const messages = await sdk.getMessages({ search: 'meeting' })
 
-        expect(results.messages.length).toBe(2)
-        expect(results.messages.every((m) => m.text?.toLowerCase().includes('meeting'))).toBe(true)
+        expect(messages.length).toBe(2)
+        expect(messages.every((m) => m.text?.toLowerCase().includes('meeting'))).toBe(true)
     })
 
     it('search is case-insensitive', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
-        const results = await sdk.getMessages({ search: 'MEETING' })
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+        const messages = await sdk.getMessages({ search: 'MEETING' })
 
-        expect(results.messages.length).toBe(2)
+        expect(messages.length).toBe(2)
     })
 
     it('combines search with other filters', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
-        const results = await sdk.getMessages({
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+        const messages = await sdk.getMessages({
             search: 'meeting',
             unreadOnly: true,
         })
 
-        expect(results.messages.length).toBe(1)
-        expect(results.messages[0].text).toContain('Meeting at 3pm')
+        expect(messages.length).toBe(1)
+        expect(messages[0].text).toContain('Meeting at 3pm')
     })
 
     it('returns empty results for no matches', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
-        const results = await sdk.getMessages({ search: 'nonexistent' })
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+        const messages = await sdk.getMessages({ search: 'nonexistent' })
 
-        expect(results.messages.length).toBe(0)
+        expect(messages.length).toBe(0)
     })
 })
 
@@ -105,12 +106,17 @@ describe('Attachment Helpers', () => {
     })
 
     const createAttachment = (filePath: string, filename: string, mimeType: string) => ({
-        id: '1',
-        filename,
+        id: 'att-1',
+        fileName: filename,
+        localPath: filePath,
         mimeType,
-        path: filePath,
-        size: 0,
-        isImage: mimeType.startsWith('image/'),
+        uti: null,
+        sizeBytes: 0,
+        transferStatus: 'complete' as const,
+        isOutgoing: false,
+        isSticker: false,
+        isSensitiveContent: false,
+        altText: null,
         createdAt: new Date(),
     })
 
@@ -130,15 +136,33 @@ describe('Attachment Helpers', () => {
         expect(size).toBe('test image content'.length)
     })
 
-    it('downloads attachment to destination', async () => {
+    it('copies attachment file to destination', async () => {
         const attachment = createAttachment(testFile, 'test.jpg', 'image/jpeg')
         const destPath = path.join(testDir, 'downloaded.jpg')
 
-        await downloadAttachment(attachment, destPath)
+        await copyAttachmentFile(attachment, destPath)
 
         expect(fs.existsSync(destPath)).toBe(true)
         const content = await fs.promises.readFile(destPath, 'utf-8')
         expect(content).toBe('test image content')
+    })
+
+    it('reads attachment bytes', async () => {
+        const attachment = createAttachment(testFile, 'test.jpg', 'image/jpeg')
+        const bytes = await readAttachmentBytes(attachment)
+
+        expect(bytes.toString('utf-8')).toBe('test image content')
+    })
+
+    it('gets attachment file info', async () => {
+        const attachment = createAttachment(testFile, 'test.jpg', 'image/jpeg')
+        const info = await getAttachmentFileInfo(attachment)
+
+        expect(info).not.toBeNull()
+        expect(info?.localPath).toBe(testFile)
+        expect(info?.size).toBe('test image content'.length)
+        expect(info?.createdAt).toBeInstanceOf(Date)
+        expect(info?.modifiedAt).toBeInstanceOf(Date)
     })
 
     it('gets attachment extension', () => {

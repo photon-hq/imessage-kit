@@ -5,8 +5,8 @@
  */
 
 import { beforeEach, describe, expect, it } from 'bun:test'
-import { MessageChain } from '../src/core/chain'
-import type { Message } from '../src/types/message'
+import { MessageChain } from '../src/application/message-chain'
+import type { Message } from '../src/domain/message'
 import { createSpy } from './setup'
 
 describe('MessageChain', () => {
@@ -15,23 +15,61 @@ describe('MessageChain', () => {
 
     beforeEach(() => {
         mockMessage = {
-            id: '1',
-            guid: 'test-guid',
+            rowId: 1,
+            id: 'test-guid',
             text: 'Hello world',
-            sender: '+1234567890',
-            senderName: null,
+            kind: 'text',
             chatId: '+1234567890', // Use valid recipient format for DM
-            isGroupChat: false,
+            chatKind: 'dm',
+            participant: '+1234567890',
             service: 'iMessage',
             isRead: false,
             isFromMe: false,
+            isSent: false,
+            isDelivered: false,
+            isDowngraded: false,
+            didNotifyRecipient: false,
+            isAutoReply: false,
+            isSystem: false,
+            isForwarded: false,
+            isAudioMessage: false,
+            isPlayed: false,
+            isExpirable: false,
+            hasError: false,
+            errorCode: 0,
+            isSpam: false,
+            isContactKeyVerified: false,
+            hasUnseenMention: false,
+            wasDeliveredQuietly: false,
+            isEmergencySos: false,
+            isCriticalAlert: false,
+            isOffGridMessage: false,
             attachments: [],
-            date: new Date(),
+            createdAt: new Date(),
+            deliveredAt: null,
+            readAt: null,
+            playedAt: null,
+            editedAt: null,
+            retractedAt: null,
+            recoveredAt: null,
+            replyToMessageId: null,
+            threadRootMessageId: null,
+            affectedParticipant: null,
+            newGroupName: null,
+            sendEffect: null,
+            appBundleId: null,
+            isInvisibleInkRevealed: false,
+            expireStatus: 'active',
+            shareActivity: 'none',
+            shareDirection: 'none',
+            scheduleKind: 'none',
+            scheduleStatus: 'none',
+            segmentCount: 0,
+            reaction: null,
         }
 
         mockSender = {
             send: async () => ({ sentAt: new Date() }),
-            sendToGroup: async () => ({ sentAt: new Date() }),
         }
     })
 
@@ -66,17 +104,15 @@ describe('MessageChain', () => {
 
         it('should filter group chat messages', async () => {
             const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
-            // For group chat, chatId should be a GUID
-            mockSender.sendToGroup = sendSpy.fn
+            mockSender.send = sendSpy.fn
 
-            const chain1 = new MessageChain({ ...mockMessage, chatId: 'chat123456789', isGroupChat: true }, mockSender)
-            await chain1.ifGroupChat().replyText('Reply').execute()
+            const chain1 = new MessageChain({ ...mockMessage, chatId: 'chat123456789', chatKind: 'group' }, mockSender)
+            await chain1.ifGroup().replyText('Reply').execute()
             expect(sendSpy.callCount()).toBe(1)
 
             sendSpy.reset()
-            mockSender.send = sendSpy.fn
-            const chain2 = new MessageChain({ ...mockMessage, isGroupChat: false }, mockSender)
-            await chain2.ifGroupChat().replyText('Reply').execute()
+            const chain2 = new MessageChain({ ...mockMessage, chatKind: 'dm' }, mockSender)
+            await chain2.ifGroup().replyText('Reply').execute()
             expect(sendSpy.callCount()).toBe(0)
         })
 
@@ -86,7 +122,7 @@ describe('MessageChain', () => {
 
             const chain = new MessageChain(mockMessage, mockSender)
             await chain
-                .when((m) => m.sender.startsWith('+1'))
+                .when((m) => (m.participant ?? '').startsWith('+1'))
                 .replyText('Reply')
                 .execute()
             expect(sendSpy.callCount()).toBe(1)
@@ -179,27 +215,27 @@ describe('MessageChain', () => {
             mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
-            await chain.replyText((m) => `Hi ${m.sender}`).execute()
+            await chain.replyText((m) => `Hi ${m.participant}`).execute()
 
             expect(sendSpy.callCount()).toBe(1)
         })
 
-        it('should reply with image', async () => {
+        it('should reply with attachment', async () => {
             const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
             mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
-            await chain.replyImage('/path/to/image.jpg').execute()
+            await chain.replyAttachments('/path/to/image.jpg').execute()
 
             expect(sendSpy.callCount()).toBe(1)
         })
 
-        it('should reply with multiple images', async () => {
+        it('should reply with multiple attachments', async () => {
             const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
             mockSender.send = sendSpy.fn
 
             const chain = new MessageChain(mockMessage, mockSender)
-            await chain.replyImage(['/path/1.jpg', '/path/2.jpg']).execute()
+            await chain.replyAttachments(['/path/1.jpg', '/path/2.jpg']).execute()
 
             expect(sendSpy.callCount()).toBe(1)
         })
@@ -263,7 +299,20 @@ describe('MessageChain', () => {
             expect(sendSpy.callCount()).toBe(2)
         })
 
-        it('should mark as executed', async () => {
+        it('should execute at most once', async () => {
+            const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
+            mockSender.send = sendSpy.fn
+
+            const chain = new MessageChain(mockMessage, mockSender)
+            chain.replyText('Message')
+
+            await chain.execute()
+            await chain.execute()
+
+            expect(sendSpy.callCount()).toBe(1)
+        })
+
+        it('should reject new actions after execution', async () => {
             const sendSpy = createSpy<() => Promise<{ sentAt: Date }>>()
             mockSender.send = sendSpy.fn
 
@@ -272,9 +321,8 @@ describe('MessageChain', () => {
 
             await chain.execute()
 
-            // Note: Current implementation allows multiple executions
-            // This is a design decision - each execute() will run all queued actions
-            expect(sendSpy.callCount()).toBeGreaterThanOrEqual(1)
+            expect(() => chain.replyText('Another message')).toThrow('MessageChain has already been executed')
+            expect(sendSpy.callCount()).toBe(1)
         })
     })
 
@@ -288,7 +336,6 @@ describe('MessageChain', () => {
                 text: '/help',
                 isFromMe: false,
                 isRead: false,
-                isGroupChat: false,
             }
 
             const chain = new MessageChain(message, mockSender)

@@ -5,8 +5,8 @@
  */
 
 import { beforeEach, describe, expect, it } from 'bun:test'
-import { type Plugin, PluginManager, definePlugin } from '../src/plugins/core'
-import { loggerPlugin } from '../src/plugins/logger'
+import { loggerPlugin } from '../src/infra/plugin/logger'
+import { definePlugin, type Plugin, PluginManager } from '../src/infra/plugin/manager'
 import { createSpy } from './setup'
 
 describe('PluginManager', () => {
@@ -28,6 +28,14 @@ describe('PluginManager', () => {
             expect(result).toBe(manager) // Chainable
         })
 
+        it('should reject duplicate plugin names', () => {
+            manager.use({ name: 'duplicate-plugin' })
+
+            expect(() => manager.use({ name: 'duplicate-plugin' })).toThrow(
+                'Plugin "duplicate-plugin" is already registered'
+            )
+        })
+
         it('should call onInit immediately if already initialized', async () => {
             await manager.init()
 
@@ -43,6 +51,29 @@ describe('PluginManager', () => {
             await new Promise((resolve) => setTimeout(resolve, 10))
 
             expect(initSpy.callCount()).toBe(1)
+        })
+
+        it('should route late onInit failures through onError', async () => {
+            await manager.init()
+
+            const errorSpy = createSpy<(ctx: { error: Error; context?: string }) => void>()
+            manager.use({
+                name: 'error-handler',
+                onError: errorSpy.fn,
+            })
+
+            manager.use({
+                name: 'late-failing-plugin',
+                onInit: () => {
+                    throw new Error('Late init failed')
+                },
+            })
+
+            await manager.flushPendingInits()
+
+            expect(errorSpy.callCount()).toBe(1)
+            expect(errorSpy.calls[0]?.args[0].error.message).toBe('Late init failed')
+            expect(errorSpy.calls[0]?.args[0].context).toBe('Plugin late-failing-plugin - onInit')
         })
     })
 
@@ -114,15 +145,36 @@ describe('PluginManager', () => {
 
             // Should not call any hooks after destroy
             const initSpy = createSpy<() => void>()
-            await manager.callHookForAll('onInit')
+            await manager.callHook('onInit')
             expect(initSpy.callCount()).toBe(0)
+        })
+
+        it('should finish pending late init before destroy', async () => {
+            await manager.init()
+
+            const events: string[] = []
+
+            manager.use({
+                name: 'late-plugin',
+                onInit: async () => {
+                    await new Promise((resolve) => setTimeout(resolve, 10))
+                    events.push('init')
+                },
+                onDestroy: async () => {
+                    events.push('destroy')
+                },
+            })
+
+            await manager.destroy()
+
+            expect(events).toEqual(['init', 'destroy'])
         })
     })
 
-    describe('callHookForAll', () => {
+    describe('callHook', () => {
         it('should call hook for all plugins that have it', async () => {
-            const spy1 = createSpy<(to: string) => void>()
-            const spy2 = createSpy<(to: string) => void>()
+            const spy1 = createSpy<(ctx: { request: { to: string; text: string } }) => void>()
+            const spy2 = createSpy<(ctx: { request: { to: string; text: string } }) => void>()
 
             manager.use({
                 name: 'plugin1',
@@ -137,15 +189,15 @@ describe('PluginManager', () => {
                 // No onBeforeSend hook
             })
 
-            await manager.callHookForAll('onBeforeSend', '+1234567890', { text: 'Hello' })
+            await manager.callHook('onBeforeSend', { request: { to: '+1234567890', text: 'Hello' } })
 
             expect(spy1.callCount()).toBe(1)
             expect(spy2.callCount()).toBe(1)
-            expect(spy1.calls[0]?.args[0]).toBe('+1234567890')
+            expect(spy1.calls[0]?.args[0].request.to).toBe('+1234567890')
         })
 
         it('should handle hook errors gracefully', async () => {
-            const errorSpy = createSpy<(error: Error) => void>()
+            const errorSpy = createSpy<(ctx: { error: Error }) => void>()
 
             manager.use({
                 name: 'failing-plugin',
@@ -158,8 +210,7 @@ describe('PluginManager', () => {
                 onError: errorSpy.fn,
             })
 
-            const errors = await manager.callHookForAll('onBeforeSend', '+1234567890', {})
-
+            const errors = await manager.callHook('onBeforeSend', { request: { to: '+1234567890' } })
             expect(errors.length).toBe(1)
             expect(errors[0]?.plugin).toBe('failing-plugin')
             expect(errors[0]?.error.message).toBe('Hook failed')
@@ -176,7 +227,7 @@ describe('PluginManager', () => {
             }
 
             manager.use(plugin)
-            await manager.callHookForAll('onBeforeSend', '+1234567890', {})
+            await manager.callHook('onBeforeSend', { request: { to: '+1234567890' } })
 
             expect(completed).toBe(true)
         })
@@ -185,7 +236,7 @@ describe('PluginManager', () => {
             manager.use({ name: 'plugin1' })
             manager.use({ name: 'plugin2' })
 
-            const errors = await manager.callHookForAll('onNewMessage', {} as any)
+            const errors = await manager.callHook('onNewMessage', { message: {} as any })
 
             expect(errors).toEqual([])
         })
@@ -225,8 +276,8 @@ describe('loggerPlugin', () => {
     it('should accept custom options', () => {
         const plugin = loggerPlugin({
             level: 'debug',
-            colored: false,
-            timestamp: true,
+            colors: false,
+            timestamps: true,
             logSend: false,
             logNewMessage: true,
         })
@@ -238,9 +289,14 @@ describe('loggerPlugin', () => {
         const plugin = loggerPlugin({ level: 'info' })
 
         expect(() => plugin.onInit?.()).not.toThrow()
-        expect(() => plugin.onBeforeSend?.('+1234567890', { text: 'Hi' })).not.toThrow()
-        expect(() => plugin.onAfterSend?.('+1234567890', { sentAt: new Date() })).not.toThrow()
-        expect(() => plugin.onError?.(new Error('Test'), 'context')).not.toThrow()
+        expect(() => plugin.onBeforeSend?.({ request: { to: '+1234567890', text: 'Hi' } })).not.toThrow()
+        expect(() =>
+            plugin.onAfterSend?.({
+                request: { to: '+1234567890', text: 'Hi' },
+                result: { chatId: '+1234567890', to: '+1234567890', service: 'iMessage', sentAt: new Date() },
+            })
+        ).not.toThrow()
+        expect(() => plugin.onError?.({ error: new Error('Test'), context: 'context' })).not.toThrow()
         expect(() => plugin.onDestroy?.()).not.toThrow()
     })
 })

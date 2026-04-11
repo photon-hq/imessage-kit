@@ -1,12 +1,8 @@
 # Dependencies
 node_modules/
-.pnp
-.pnp.js
-scripts/
 
 # Build output
 dist/
-build/
 *.tsbuildinfo
 
 # Environment & Secrets
@@ -17,16 +13,16 @@ build/
 *.key
 .npmrc
 
+# Lock files (bun-only — package-lock.json is not used)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # Logs
-logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
 
 # Testing & Coverage
 coverage/
-.nyc_output/
 test-results/
 
 # Editor & IDE
@@ -35,20 +31,13 @@ test-results/
 .idea/
 *.swp
 *~
+.cursor/
 
 # OS Files
 .DS_Store
-._*
-Thumbs.db
-Desktop.ini
 
 # Temp files
 .cache/
 .temp/
 .tmp/
 *.tmp
-.cursor/
-
-# Documentation build
-docs/api/
-.docusaurus/

@@ -6,50 +6,7 @@
 
 import { describe, expect, it } from 'bun:test'
 import { NSAttributedString, Unarchiver } from '@parseaple/typedstream'
-
-/**
- * Helper function that mirrors the extraction logic in database.ts
- */
-function extractTextFromAttributedBody(attributedBody: unknown): string | null {
-    if (!attributedBody) return null
-
-    try {
-        let buffer: Buffer
-        if (Buffer.isBuffer(attributedBody)) {
-            buffer = attributedBody
-        } else if (attributedBody instanceof Uint8Array) {
-            buffer = Buffer.from(attributedBody)
-        } else {
-            return null
-        }
-
-        if (buffer.length === 0) return null
-
-        const decoded = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeAll()
-
-        if (!decoded) return null
-
-        const items = Array.isArray(decoded) ? decoded : [decoded]
-
-        for (const item of items) {
-            if (item instanceof NSAttributedString && item.string) {
-                return item.string
-            }
-
-            if (item !== null && typeof item === 'object' && 'values' in item && Array.isArray(item.values)) {
-                for (const val of item.values) {
-                    if (val instanceof NSAttributedString && val.string) {
-                        return val.string
-                    }
-                }
-            }
-        }
-    } catch {
-        // Silently fail
-    }
-
-    return null
-}
+import { extractTextFromAttributedBody } from '../src/infra/db/body-decoder'
 
 describe('AttributedBody Extraction', () => {
     describe('Edge Cases', () => {

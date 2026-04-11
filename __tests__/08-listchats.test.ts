@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test'
-import { IMessageDatabase } from '../src/core/database'
-import { IMessageSDK } from '../src/core/sdk'
+import { IMessageSDK } from '../src/sdk'
 import { cleanupTempDir, createMockDatabase, insertTestMessage } from './setup'
 
 // Mock platform to avoid macOS restriction during tests
-mock.module('../src/utils/platform', () => ({
+mock.module('../src/infra/platform', () => ({
     requireMacOS: () => {},
-    isMacOS: () => true,
     getDefaultDatabasePath: () => '/mock/path/chat.db',
+    getDarwinMajorVersion: () => 24,
 }))
 
 describe('listChats', () => {
@@ -51,23 +50,23 @@ describe('listChats', () => {
     })
 
     it('returns chat summaries with correct chatId formats', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
+        const sdk = new IMessageSDK({ databasePath: dbPath })
         const chats = await sdk.listChats()
 
         // Expect at least two chats: one DM and one group
         expect(chats.length).toBeGreaterThanOrEqual(2)
 
-        const dm = chats.find((c) => c.chatId === 'iMessage;+1234567890')
+        const dm = chats.find((c) => c.chatId === 'iMessage;-;+1234567890')
         const group = chats.find((c) => c.chatId === 'chatTEST1234567890')
 
         expect(dm).toBeTruthy()
         expect(group).toBeTruthy()
 
-        expect(dm!.isGroup).toBe(false)
-        expect(group!.isGroup).toBe(true)
+        expect(dm!.kind).toBe('dm')
+        expect(group!.kind).toBe('group')
 
-        expect(dm!.displayName).toBeNull()
-        expect(group!.displayName).toBeNull()
+        expect(dm!.name).toBeNull()
+        expect(group!.name).toBeNull()
 
         expect(dm!.lastMessageAt).not.toBeNull()
         expect(group!.lastMessageAt).not.toBeNull()
@@ -78,25 +77,38 @@ describe('listChats', () => {
     })
 
     it('respects limit parameter', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
-        const chatsLimited = await sdk.listChats(1)
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+        const chatsLimited = await sdk.listChats({ limit: 1 })
         expect(chatsLimited.length).toBe(1)
     })
 
-    it('filters by type', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
+    it('filters by kind', async () => {
+        const sdk = new IMessageSDK({ databasePath: dbPath })
 
-        const groups = await sdk.listChats({ type: 'group' })
-        expect(groups.every((c) => c.isGroup)).toBe(true)
+        const groups = await sdk.listChats({ kind: 'group' })
+        expect(groups.every((c) => c.kind === 'group')).toBe(true)
 
-        const dms = await sdk.listChats({ type: 'dm' })
-        expect(dms.every((c) => !c.isGroup)).toBe(true)
+        const dms = await sdk.listChats({ kind: 'dm' })
+        expect(dms.every((c) => c.kind === 'dm')).toBe(true)
     })
 
     it('filters by unread status', async () => {
-        const sdk = new IMessageSDK({}, { database: new IMessageDatabase(dbPath) })
+        const sdk = new IMessageSDK({ databasePath: dbPath })
 
         const unread = await sdk.listChats({ hasUnread: true })
         expect(unread.every((c) => c.unreadCount > 0)).toBe(true)
+    })
+
+    it('filters by chatId through the enriched chat query', async () => {
+        const sdk = new IMessageSDK({ databasePath: dbPath })
+
+        const dm = await sdk.listChats({ chatId: 'iMessage;-;+1234567890' })
+        const group = await sdk.listChats({ chatId: 'chatTEST1234567890' })
+
+        expect(dm).toHaveLength(1)
+        expect(dm[0]?.chatId).toBe('iMessage;-;+1234567890')
+
+        expect(group).toHaveLength(1)
+        expect(group[0]?.chatId).toBe('chatTEST1234567890')
     })
 })

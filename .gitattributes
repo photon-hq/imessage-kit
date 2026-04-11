@@ -1,3 +1,5 @@
-# Lock files - merge strategy
-package-lock.json merge=union
-bun.lock merge=union
+# Normalize line endings
+* text=auto
+
+# Lock file — force manual conflict resolution
+bun.lock -merge

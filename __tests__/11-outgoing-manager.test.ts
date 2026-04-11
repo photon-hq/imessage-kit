@@ -3,24 +3,62 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { MessagePromise } from '../src/core/message-promise'
-import { OutgoingMessageManager } from '../src/core/outgoing-manager'
-import type { Message } from '../src/types/message'
+import type { Message } from '../src/domain/message'
+import { MessagePromise, OutgoingMessageManager } from '../src/infra/outgoing/tracker'
 
 describe('OutgoingMessageManager', () => {
     const createMockMessage = (overrides: Partial<Message> = {}): Message => ({
-        id: '123',
-        guid: 'test-guid',
+        rowId: 123,
+        id: 'test-guid',
         text: 'Hello',
-        sender: 'test@example.com',
-        senderName: null,
+        kind: 'text',
         chatId: 'pilot@photon.codes',
-        isGroupChat: false,
+        chatKind: 'dm',
+        participant: 'test@example.com',
         service: 'iMessage',
         isRead: false,
         isFromMe: true,
+        isSent: false,
+        isDelivered: false,
+        isDowngraded: false,
+        didNotifyRecipient: false,
+        isAutoReply: false,
+        isSystem: false,
+        isForwarded: false,
+        isAudioMessage: false,
+        isPlayed: false,
+        isExpirable: false,
+        hasError: false,
+        errorCode: 0,
+        isSpam: false,
+        isContactKeyVerified: false,
+        hasUnseenMention: false,
+        wasDeliveredQuietly: false,
+        isEmergencySos: false,
+        isCriticalAlert: false,
+        isOffGridMessage: false,
         attachments: [],
-        date: new Date(),
+        createdAt: new Date(),
+        deliveredAt: null,
+        readAt: null,
+        playedAt: null,
+        editedAt: null,
+        retractedAt: null,
+        recoveredAt: null,
+        replyToMessageId: null,
+        threadRootMessageId: null,
+        affectedParticipant: null,
+        newGroupName: null,
+        sendEffect: null,
+        appBundleId: null,
+        isInvisibleInkRevealed: false,
+        expireStatus: 'active',
+        shareActivity: 'none',
+        shareDirection: 'none',
+        scheduleKind: 'none',
+        scheduleStatus: 'none',
+        segmentCount: 0,
+        reaction: null,
         ...overrides,
     })
 
@@ -49,7 +87,7 @@ describe('OutgoingMessageManager', () => {
         manager.add(promise)
 
         const message = createMockMessage({ text: 'Hello', chatId: 'pilot@photon.codes' })
-        const matched = manager.tryResolve(message)
+        const matched = manager.tryMatch(message)
 
         expect(matched).toBe(true)
         expect(promise.isResolved).toBe(true)
@@ -67,7 +105,7 @@ describe('OutgoingMessageManager', () => {
         manager.add(promise)
 
         const message = createMockMessage({ text: 'Goodbye' })
-        const matched = manager.tryResolve(message)
+        const matched = manager.tryMatch(message)
 
         expect(matched).toBe(false)
         expect(promise.isResolved).toBe(false)
@@ -85,7 +123,7 @@ describe('OutgoingMessageManager', () => {
         manager.add(promise)
 
         const message = createMockMessage({ text: 'Hello', isFromMe: false })
-        const matched = manager.tryResolve(message)
+        const matched = manager.tryMatch(message)
 
         expect(matched).toBe(false)
     })
@@ -157,14 +195,14 @@ describe('OutgoingMessageManager', () => {
 
         // Resolve first message
         const message1 = createMockMessage({ text: 'Hello' })
-        manager.tryResolve(message1)
+        manager.tryMatch(message1)
 
         expect(promise1.isResolved).toBe(true)
         expect(promise2.isResolved).toBe(false)
 
         // Resolve second message
         const message2 = createMockMessage({ text: 'World' })
-        manager.tryResolve(message2)
+        manager.tryMatch(message2)
 
         expect(promise2.isResolved).toBe(true)
     })

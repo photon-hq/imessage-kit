@@ -6,26 +6,23 @@
 
 import type { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
-import { IMessageDatabase } from '../src/core/database'
-import { IMessageSDK } from '../src/core/sdk'
-import { MessageSender } from '../src/core/sender'
-import { PluginManager } from '../src/plugins/core'
-import { loggerPlugin } from '../src/plugins/logger'
-// Import real asRecipient before mocking
-import { asRecipient as realAsRecipient } from '../src/types/advanced'
+import { loggerPlugin } from '../src/infra/plugin/logger'
+import { IMessageSDK } from '../src/sdk'
 import { createMockDatabase, createSpy, insertTestMessage } from './setup'
 
 // Mock platform check
-mock.module('../src/utils/platform', () => ({
+mock.module('../src/infra/platform', () => ({
     requireMacOS: () => {},
-    isMacOS: () => true,
     getDefaultDatabasePath: () => '/mock/path/chat.db',
-    asRecipient: realAsRecipient, // Use real implementation
+    getDarwinMajorVersion: () => 24,
 }))
 
 describe('Integration Tests', () => {
     let mockDb: { db: Database; path: string; cleanup: () => void }
-    let sdk: IMessageSDK
+    let sdk!: IMessageSDK
+
+    const createSdk = (config: ConstructorParameters<typeof IMessageSDK>[0] = {}) =>
+        new IMessageSDK({ databasePath: mockDb.path, ...config })
 
     beforeEach(() => {
         mockDb = createMockDatabase()
@@ -35,6 +32,7 @@ describe('Integration Tests', () => {
         if (sdk) {
             await sdk.close()
         }
+
         mockDb.cleanup()
     })
 
@@ -60,23 +58,12 @@ describe('Integration Tests', () => {
                 isFromMe: true,
             })
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
+            sdk = createSdk()
 
-            sdk = new IMessageSDK(
-                {},
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
-
-            const result = await sdk.getMessages({ unreadOnly: true })
+            const messages = await sdk.getMessages({ unreadOnly: true })
 
             let processedCount = 0
-            for (const message of result.messages) {
+            for (const message of messages) {
                 await sdk
                     .message(message)
                     .ifUnread()
@@ -86,7 +73,7 @@ describe('Integration Tests', () => {
                     .execute()
             }
 
-            expect(processedCount).toBe(2) // Only unread messages (own messages excluded by default)
+            expect(processedCount).toBe(2) // Only unread messages
         })
 
         it('should handle text matching in chains', async () => {
@@ -109,25 +96,14 @@ describe('Integration Tests', () => {
                 isFromMe: false,
             })
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
+            sdk = createSdk()
 
-            sdk = new IMessageSDK(
-                {},
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
-
-            const result = await sdk.getMessages()
+            const messages = await sdk.getMessages()
 
             let helpCount = 0
             let startCount = 0
 
-            for (const message of result.messages) {
+            for (const message of messages) {
                 await sdk
                     .message(message)
                     .matchText(/^\/help$/i)
@@ -162,28 +138,17 @@ describe('Integration Tests', () => {
                 sender: '+1234567890',
             })
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
-
-            sdk = new IMessageSDK(
-                {
-                    plugins: [
-                        {
-                            name: 'test-plugin',
-                            onInit: initSpy.fn,
-                            onBeforeQuery: beforeQuerySpy.fn,
-                            onAfterQuery: afterQuerySpy.fn,
-                            onDestroy: destroySpy.fn,
-                        },
-                    ],
-                },
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
+            sdk = createSdk({
+                plugins: [
+                    {
+                        name: 'test-plugin',
+                        onInit: initSpy.fn,
+                        onBeforeMessageQuery: beforeQuerySpy.fn,
+                        onAfterMessageQuery: afterQuerySpy.fn,
+                        onDestroy: destroySpy.fn,
+                    },
+                ],
+            })
 
             // Trigger query
             await sdk.getMessages()
@@ -203,27 +168,16 @@ describe('Integration Tests', () => {
                 sender: '+1234567890',
             })
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
-
-            sdk = new IMessageSDK(
-                {
-                    plugins: [
-                        loggerPlugin({
-                            level: 'info',
-                            colored: false,
-                            timestamp: false,
-                        }),
-                    ],
-                    debug: true,
-                },
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
+            sdk = createSdk({
+                plugins: [
+                    loggerPlugin({
+                        level: 'info',
+                        colored: false,
+                        timestamp: false,
+                    }),
+                ],
+                debug: true,
+            })
 
             // Should not throw
             await expect(sdk.getMessages()).resolves.toBeDefined()
@@ -237,24 +191,13 @@ describe('Integration Tests', () => {
             const plugin2Spy = createSpy<() => void>()
             const plugin3Spy = createSpy<() => void>()
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
-
-            sdk = new IMessageSDK(
-                {
-                    plugins: [
-                        { name: 'plugin1', onInit: plugin1Spy.fn },
-                        { name: 'plugin2', onInit: plugin2Spy.fn },
-                        { name: 'plugin3', onInit: plugin3Spy.fn },
-                    ],
-                },
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
+            sdk = createSdk({
+                plugins: [
+                    { name: 'plugin1', onInit: plugin1Spy.fn },
+                    { name: 'plugin2', onInit: plugin2Spy.fn },
+                    { name: 'plugin3', onInit: plugin3Spy.fn },
+                ],
+            })
 
             // Trigger plugin initialization
             await sdk.getMessages()
@@ -267,31 +210,20 @@ describe('Integration Tests', () => {
         it('should handle plugin errors gracefully', async () => {
             const workingPluginSpy = createSpy<() => void>()
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
-
-            sdk = new IMessageSDK(
-                {
-                    plugins: [
-                        {
-                            name: 'failing-plugin',
-                            onBeforeQuery: () => {
-                                throw new Error('Plugin error')
-                            },
+            sdk = createSdk({
+                plugins: [
+                    {
+                        name: 'failing-plugin',
+                        onBeforeMessageQuery: () => {
+                            throw new Error('Plugin error')
                         },
-                        {
-                            name: 'working-plugin',
-                            onBeforeQuery: workingPluginSpy.fn,
-                        },
-                    ],
-                },
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
+                    },
+                    {
+                        name: 'working-plugin',
+                        onBeforeMessageQuery: workingPluginSpy.fn,
+                    },
+                ],
+            })
 
             // Should still work despite plugin error
             await expect(sdk.getMessages()).resolves.toBeDefined()
@@ -314,24 +246,13 @@ describe('Integration Tests', () => {
                 isFromMe: false,
             })
 
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
+            sdk = createSdk()
 
-            sdk = new IMessageSDK(
-                {},
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
-
-            const result = await sdk.getMessages({ unreadOnly: true })
+            const messages = await sdk.getMessages({ unreadOnly: true })
 
             const replies: Array<{ to: string; text: string }> = []
 
-            for (const message of result.messages) {
+            for (const message of messages) {
                 // Handle /help command
                 await sdk
                     .message(message)
@@ -365,27 +286,16 @@ describe('Integration Tests', () => {
 
     describe('Error Recovery', () => {
         it('should recover from plugin errors', async () => {
-            const database = new IMessageDatabase(mockDb.path)
-            const sender = new MessageSender(false, { max: 2, delay: 1000 }, 5, 30000)
-            const pluginManager = new PluginManager()
-
-            sdk = new IMessageSDK(
-                {
-                    plugins: [
-                        {
-                            name: 'error-plugin',
-                            onInit: () => {
-                                throw new Error('Init error')
-                            },
+            sdk = createSdk({
+                plugins: [
+                    {
+                        name: 'error-plugin',
+                        onInit: () => {
+                            throw new Error('Init error')
                         },
-                    ],
-                },
-                {
-                    database,
-                    sender,
-                    pluginManager,
-                }
-            )
+                    },
+                ],
+            })
 
             // SDK should still work
             await expect(sdk.getMessages()).resolves.toBeDefined()

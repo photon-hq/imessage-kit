@@ -72,20 +72,10 @@ await sdk.close()
 
 ```typescript
 interface IMessageConfig {
-    debug?: boolean              // Enable debug logging
-    maxConcurrent?: number       // Max concurrent sends (default: 5)
-    scriptTimeout?: number       // AppleScript timeout in ms
-    databasePath?: string        // Custom database path
-    plugins?: Plugin[]           // Plugins
-    watcher?: {
-        pollInterval?: number    // Polling interval (default: 2000)
-        unreadOnly?: boolean     // Only watch unread (default: false)
-        excludeOwnMessages?: boolean  // Exclude own messages (default: true)
-    }
-    webhook?: {
-        url: string
-        headers?: Record<string, string>
-    }
+    databasePath?: string              // Path to Messages SQLite database
+    maxConcurrentSends?: number        // Max concurrent sends (default: 5)
+    debug?: boolean                    // Enable verbose debug logging
+    plugins?: Plugin[]                 // Plugin list
 }
 ```
 
@@ -112,32 +102,23 @@ await sdk.send('+1234567890', 'Hello World!')
 await sdk.send('user@example.com', 'Hello!')
 ```
 
-### Send Images
+### Send Attachments
 
 ```typescript
-// Send local images
-await sdk.send('+1234567890', { 
-    images: ['image1.jpg', 'image2.png'] 
+// Send local files (images, PDFs, any file type)
+await sdk.send('+1234567890', {
+    attachments: ['image.jpg', 'document.pdf']
 })
 
 // Send network images (auto-download)
-await sdk.send('+1234567890', { 
-    images: ['https://example.com/image.jpg'] 
+await sdk.send('+1234567890', {
+    attachments: ['https://example.com/image.jpg']
 })
 
-// Text with images
-await sdk.send('+1234567890', { 
+// Text with attachments
+await sdk.send('+1234567890', {
     text: 'Check this out!',
-    images: ['photo.jpg']
-})
-```
-
-### Send Files
-
-```typescript
-// Send files (PDF, CSV, VCF, etc.)
-await sdk.send('+1234567890', { 
-    files: ['document.pdf', 'data.csv', 'contact.vcf'] 
+    attachments: ['photo.jpg', 'report.pdf']
 })
 
 // Convenience methods
@@ -150,16 +131,16 @@ await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
 ```typescript
 // Get messages with filters
 const result = await sdk.getMessages({
-    sender: '+1234567890',
+    participant: '+1234567890',
     unreadOnly: true,
     limit: 20,
     since: new Date('2025-01-01'),
     search: 'meeting'
 })
 
-// Get unread messages grouped by sender
-const unread = await sdk.getUnreadMessages()
-console.log(`${unread.total} unread from ${unread.senderCount} senders`)
+// Get unread messages
+const unread = await sdk.getMessages({ unreadOnly: true })
+console.log(`${unread.length} unread messages`)
 ```
 
 ---
@@ -176,7 +157,7 @@ const all = await sdk.listChats()
 
 // Filter chats
 const groups = await sdk.listChats({
-    type: 'group',
+    kind: 'group',
     hasUnread: true,
     sortBy: 'recent',
     search: 'Project',
@@ -187,8 +168,8 @@ const groups = await sdk.listChats({
 for (const chat of groups) {
     console.log({
         chatId: chat.chatId,
-        name: chat.displayName,
-        isGroup: chat.isGroup,
+        name: chat.name,
+        kind: chat.kind,
         unread: chat.unreadCount
     })
 }
@@ -198,14 +179,14 @@ for (const chat of groups) {
 
 ```typescript
 // Get group chatId from listChats()
-const groups = await sdk.listChats({ type: 'group' })
+const groups = await sdk.listChats({ kind: 'group' })
 const chatId = groups[0].chatId  // e.g., 'chat45e2b868...'
 
 // Send to group
 await sdk.send(chatId, 'Hello group!')
 await sdk.send(chatId, {
     text: 'Check these files',
-    files: ['report.pdf']
+    attachments: ['report.pdf']
 })
 ```
 
@@ -226,7 +207,7 @@ await sdk.startWatching({
     
     // DMs only
     onDirectMessage: (msg) => {
-        console.log(`DM from ${msg.sender}`)
+        console.log(`DM from ${msg.participant}`)
     },
     
     // Groups only
@@ -263,10 +244,10 @@ await sdk.startWatching({
 await sdk.message(msg)
     .ifUnread()
     .ifNotReaction()   // Skip tapback reactions
-    .ifGroupChat()
-    .when(m => m.sender.startsWith('+1'))
+    .ifGroup()
+    .when(m => (m.participant ?? '').startsWith('+1'))
     .matchText(/photo/i)
-    .replyImage(['photo.jpg'])
+    .replyAttachments(['photo.jpg'])
     .execute()
 ```
 
@@ -281,21 +262,23 @@ await sdk.message(msg)
 ```typescript
 import {
     attachmentExists,
-    downloadAttachment,
+    copyAttachmentFile,
+    getAttachmentFileInfo,
     getAttachmentSize,
     isImageAttachment,
     isVideoAttachment,
     isAudioAttachment
 } from '@photon-ai/imessage-kit'
 
-const msg = await sdk.getMessages({ hasAttachments: true, limit: 1 })
-const attachment = msg.messages[0].attachments[0]
+const messages = await sdk.getMessages({ hasAttachments: true, limit: 1 })
+const attachment = messages[0].attachments[0]
 
 if (await attachmentExists(attachment)) {
     const size = await getAttachmentSize(attachment)
+    const info = await getAttachmentFileInfo(attachment)
     
     if (isImageAttachment(attachment)) {
-        await downloadAttachment(attachment, '/path/to/save.jpg')
+        await copyAttachmentFile(attachment, '/path/to/save.jpg')
     }
 }
 ```
@@ -321,25 +304,31 @@ if (await attachmentExists(attachment)) {
 import { IMessageSDK, MessageScheduler } from '@photon-ai/imessage-kit'
 
 const sdk = new IMessageSDK()
-const scheduler = new MessageScheduler(sdk, { debug: true }, {
-    onSent: (msg, result) => console.log(`✅ Sent: ${msg.id}`),
-    onError: (msg, error) => console.error(`❌ Failed: ${error.message}`),
-    onComplete: (msg) => console.log(`🏁 Completed: ${msg.id}`)
+const scheduler = new MessageScheduler({
+    sender: sdk,
+    debug: true,
+    events: {
+        onSent: (task, result) => console.log(`Sent: ${task.id}`),
+        onError: (task, error) => console.error(`Failed: ${error.message}`),
+        onComplete: (task) => console.log(`Completed: ${task.id}`)
+    }
 })
+
+scheduler.start()
 
 // One-time message
 const id = scheduler.schedule({
     to: '+1234567890',
     content: 'Reminder!',
-    sendAt: new Date(Date.now() + 5 * 60 * 1000)  // 5 minutes
+    sendAt: new Date(Date.now() + 5 * 60_000)
 })
 
 // Recurring daily
 scheduler.scheduleRecurring({
     to: '+1234567890',
-    content: 'Good morning! ☀️',
+    content: 'Good morning!',
     startAt: new Date('2025-01-01T08:00:00'),
-    interval: 'daily',  // 'hourly' | 'daily' | 'weekly' | 'monthly' | number
+    interval: 'daily',  // 'hourly' | 'daily' | 'weekly' | 'monthly' | number (ms)
     endAt: new Date('2025-12-31')
 })
 
@@ -347,10 +336,6 @@ scheduler.scheduleRecurring({
 scheduler.reschedule(id, newDate)
 scheduler.cancel(id)
 scheduler.getPending()
-
-// Persistence
-const data = scheduler.export()
-scheduler.import(data)
 
 // Cleanup
 scheduler.destroy()
@@ -403,18 +388,17 @@ import { loggerPlugin } from '@photon-ai/imessage-kit'
 // Built-in logger
 sdk.use(loggerPlugin({
     level: 'info',
-    colored: true
+    colors: true
 }))
 
 // Custom plugin
 sdk.use({
     name: 'my-plugin',
     onInit: async () => console.log('Initialized'),
-    onBeforeSend: async (to, content) => {
-        console.log('Sending to:', to)
-        return { to, content }
+    onBeforeSend: async ({ request }) => {
+        console.log('Sending to:', request.to)
     },
-    onAfterSend: async (result) => {
+    onAfterSend: async ({ result }) => {
         console.log('Sent:', result)
     },
     onDestroy: async () => console.log('Destroyed')
@@ -428,17 +412,14 @@ sdk.use({
 > Example: [12-error-handling.ts](./examples/12-error-handling.ts)
 
 ```typescript
-import { SendError, DatabaseError, PlatformError } from '@photon-ai/imessage-kit'
+import { IMessageError } from '@photon-ai/imessage-kit'
 
 try {
     await sdk.send('+1234567890', 'Hello')
 } catch (error) {
-    if (error instanceof SendError) {
-        console.error('Send failed:', error.message)
-    } else if (error instanceof DatabaseError) {
-        console.error('Database error:', error.message)
-    } else if (error instanceof PlatformError) {
-        console.error('Platform error:', error.message)
+    if (error instanceof IMessageError) {
+        // error.code: 'PLATFORM' | 'DATABASE' | 'SEND' | 'CONFIG'
+        console.error(`[${error.code}] ${error.message}`)
     }
 }
 ```
@@ -489,12 +470,11 @@ bun run examples/<filename>.ts
 | Method | Description |
 |--------|-------------|
 | `getMessages(filter?)` | Query messages with filters |
-| `getUnreadMessages()` | Get unread messages grouped by sender |
 | `listChats(options?)` | List chats with filtering/sorting |
 | `send(to, content)` | Send text, images, and/or files |
 | `sendFile(to, path, text?)` | Send a single file |
 | `sendFiles(to, paths, text?)` | Send multiple files |
-| `sendBatch(messages)` | Send multiple messages concurrently |
+| `sendBatch(items, options?)` | Send multiple messages with controlled concurrency |
 | `message(msg)` | Create message processing chain |
 | `startWatching(events?)` | Start monitoring new messages |
 | `stopWatching()` | Stop monitoring |
@@ -505,28 +485,26 @@ bun run examples/<filename>.ts
 
 ```typescript
 interface Message {
+    rowId: number
     id: string
-    guid: string
     text: string | null
-    sender: string
-    senderName: string | null
+    participant: string | null
     chatId: string
-    isGroupChat: boolean
+    chatKind: 'dm' | 'group' | 'unknown'
     isFromMe: boolean
     isRead: boolean
-    service: 'iMessage' | 'SMS' | 'RCS'
+    service: 'iMessage' | 'SMS' | 'RCS' | 'unknown'
+    reaction: Reaction | null
     attachments: Attachment[]
-    date: Date
-    // Reaction fields
-    isReaction: boolean
-    reactionType: 'love' | 'like' | 'dislike' | 'laugh' | 'emphasize' | 'question' | null
-    isReactionRemoval: boolean
-    associatedMessageGuid: string | null
+    createdAt: Date
 }
 
 interface SendResult {
+    chatId: string
+    to: string
+    service: Service
     sentAt: Date
-    message?: Message  // Available if watcher is running
+    message?: Message  // Present when watcher confirms delivery
 }
 ```
 
@@ -535,7 +513,7 @@ interface SendResult {
 ## Requirements
 
 - **OS**: macOS only
-- **Runtime**: Node.js >= 18.0.0 or Bun >= 1.0.0
+- **Runtime**: Node.js >= 20.0.0 or Bun >= 1.0.0
 - **Permissions**: Full Disk Access
 
 ---

@@ -1,24 +1,17 @@
 import { IMessageSDK } from '../src'
 
-const sdk = new IMessageSDK({
-    watcher: {
-        excludeOwnMessages: false  // Include own messages
-    }
-})
+const sdk = new IMessageSDK()
 
-// Watch all messages including own messages
+// onMessage receives ALL messages including your own
 await sdk.startWatching({
     onMessage: (msg) => {
         const prefix = msg.isFromMe ? '[ME]' : '[OTHER]'
-        console.log(`${prefix} ${msg.sender}: ${msg.text}`)
-    }
+        console.log(`${prefix} ${msg.participant ?? 'unknown'}: ${msg.text}`)
+    },
 })
 
-console.log('Watching all messages (including own)...')
-console.log('Press Ctrl+C to stop')
-
 process.on('SIGINT', async () => {
-    await sdk.stopWatching()
+    sdk.stopWatching()
     await sdk.close()
     process.exit(0)
 })
