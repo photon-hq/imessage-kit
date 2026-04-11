@@ -3,23 +3,62 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { MessagePromise } from '../src/core/message-promise'
-import type { Message } from '../src/types/message'
+import type { Message } from '../src/domain/message'
+import { MessagePromise } from '../src/infra/outgoing/tracker'
 
 describe('MessagePromise', () => {
     const createMockMessage = (overrides: Partial<Message> = {}): Message => ({
-        id: '123',
-        guid: 'test-guid',
+        rowId: 123,
+        id: 'test-guid',
         text: 'Hello',
-        sender: 'test@example.com',
-        senderName: null,
+        kind: 'text',
         chatId: 'pilot@photon.codes',
-        isGroupChat: false,
+        chatKind: 'dm',
+        participant: 'test@example.com',
         service: 'iMessage',
         isRead: false,
         isFromMe: true,
+        isSent: false,
+        isDelivered: false,
+        isDowngraded: false,
+        didNotifyRecipient: false,
+        isAutoReply: false,
+        isSystem: false,
+        isForwarded: false,
+        isAudioMessage: false,
+        isPlayed: false,
+        isExpirable: false,
+        hasError: false,
+        errorCode: 0,
+        isSpam: false,
+        isContactKeyVerified: false,
+        hasUnseenMention: false,
+        wasDeliveredQuietly: false,
+        isEmergencySos: false,
+        isCriticalAlert: false,
+        isOffGridMessage: false,
         attachments: [],
-        date: new Date(),
+        createdAt: new Date(),
+        deliveredAt: null,
+        readAt: null,
+        playedAt: null,
+        editedAt: null,
+        retractedAt: null,
+        recoveredAt: null,
+        replyToMessageId: null,
+        threadRootMessageId: null,
+        affectedParticipant: null,
+        newGroupName: null,
+        sendEffect: null,
+        appBundleId: null,
+        isInvisibleInkRevealed: false,
+        expireStatus: 'active',
+        shareActivity: 'none',
+        shareDirection: 'none',
+        scheduleKind: 'none',
+        scheduleStatus: 'none',
+        segmentCount: 0,
+        reaction: null,
         ...overrides,
     })
 
@@ -142,7 +181,7 @@ describe('MessagePromise', () => {
                 sentAt: Date.now(),
             })
 
-            const message = createMockMessage({ chatId: 'chat123', isGroupChat: true })
+            const message = createMockMessage({ chatId: 'chat123', chatKind: 'group' })
             expect(promise.matches(message)).toBe(true)
         })
 
@@ -171,12 +210,17 @@ describe('MessagePromise', () => {
             const message = createMockMessage({
                 attachments: [
                     {
-                        id: '1',
-                        filename: 'test.jpg',
+                        id: 'att-1',
+                        fileName: 'test.jpg',
+                        localPath: '/path/to/test.jpg',
                         mimeType: 'image/jpeg',
-                        path: '/path/to/test.jpg',
-                        size: 1024,
-                        isImage: true,
+                        uti: null,
+                        sizeBytes: 1024,
+                        transferStatus: 'complete',
+                        isOutgoing: false,
+                        isSticker: false,
+                        isSensitiveContent: false,
+                        altText: null,
                         createdAt: new Date(),
                     },
                 ],
@@ -196,12 +240,17 @@ describe('MessagePromise', () => {
             const message = createMockMessage({
                 attachments: [
                     {
-                        id: '1',
-                        filename: 'test.png', // Different extension
+                        id: 'att-1',
+                        fileName: 'test.png', // Different extension
+                        localPath: '/path/to/test.png',
                         mimeType: 'image/png',
-                        path: '/path/to/test.png',
-                        size: 1024,
-                        isImage: true,
+                        uti: null,
+                        sizeBytes: 1024,
+                        transferStatus: 'complete',
+                        isOutgoing: false,
+                        isSticker: false,
+                        isSensitiveContent: false,
+                        altText: null,
                         createdAt: new Date(),
                     },
                 ],
@@ -237,7 +286,7 @@ describe('MessagePromise', () => {
             // Message from 10 seconds ago
             const message = createMockMessage({
                 text: 'Hello',
-                date: new Date(now - 10000),
+                createdAt: new Date(now - 10000),
             })
 
             expect(promise.matches(message)).toBe(false)
@@ -255,7 +304,7 @@ describe('MessagePromise', () => {
             // Message from 2 seconds ago (within 5s window)
             const message = createMockMessage({
                 text: 'Hello',
-                date: new Date(now - 2000),
+                createdAt: new Date(now - 2000),
             })
 
             expect(promise.matches(message)).toBe(true)
@@ -307,14 +356,14 @@ describe('MessagePromise', () => {
                 sentAt: Date.now(),
             })
 
-            const message1 = createMockMessage({ id: '1' })
-            const message2 = createMockMessage({ id: '2' })
+            const message1 = createMockMessage({ rowId: 1 })
+            const message2 = createMockMessage({ rowId: 2 })
 
             promise.resolve(message1)
             promise.resolve(message2) // Should be ignored
 
             const result = await promise.promise
-            expect(result.id).toBe('1')
+            expect(result.rowId).toBe(1)
         })
     })
 })

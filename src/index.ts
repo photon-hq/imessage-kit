@@ -1,111 +1,144 @@
 /**
- * @photon-ai/imessage-kit - macOS iMessage Development Kit
+ * Public API barrel.
  *
- * @example
- * ```ts
- * import { IMessageSDK, type IMessageConfig, type Message } from '@photon-ai/imessage-kit'
- *
- * const sdk = new IMessageSDK({
- *   debug: true,
- *   webhook: { url: 'https://your-server.com/webhook' }
- * })
- *
- * // Get unread messages
- * const unread = await sdk.getUnreadMessages()
- * console.log(`${unread.total} unread from ${unread.senderCount} senders`)
- * for (const { sender, messages } of unread.groups) {
- *   console.log(`${sender}: ${messages.length} messages`)
- * }
- *
- * // Send messages
- * await sdk.send('+1234567890', 'Hello')
- * await sdk.send('+1234567890', { images: ['/path/to/image.jpg'] })
- * await sdk.send('+1234567890', { files: ['/path/to/document.pdf'] })
- * await sdk.sendFile('+1234567890', '/path/to/contact.vcf', 'Contact info')
- *
- * // Chain message processing
- * await sdk.startWatching({
- *   onDirectMessage: async (msg: Message) => {
- *     await sdk.message(msg)
- *       .ifFromOthers()
- *       .matchText(/hello/i)
- *       .replyText('Hi!')
- *       .execute()
- *   }
- * })
- * ```
+ * Every symbol importable from '@photon-ai/imessage-kit' is re-exported here.
+ * Internal modules (infra internals, domain resolve functions) are NOT exposed.
  */
 
-export { MessageChain } from './core/chain'
+// -----------------------------------------------
+// SDK
+// -----------------------------------------------
+
+export type {
+    SendBatchItem,
+    SendBatchItemResult,
+    SendBatchOptions,
+    SendBatchResult,
+    WatcherEvents,
+} from './sdk'
+export { IMessageSDK } from './sdk'
+
+// -----------------------------------------------
+// Config
+// -----------------------------------------------
+
+export { BOUNDS, LIMITS } from './config'
+export type { IMessageConfig } from './types/config'
+
+// -----------------------------------------------
+// Domain — types
+// -----------------------------------------------
+
+export type { Attachment, TransferStatus } from './domain/attachment'
+export type { Chat, ChatKind } from './domain/chat'
+export type {
+    ExpireStatus,
+    Message,
+    MessageKind,
+    ScheduleKind,
+    ScheduleStatus,
+    ShareActivity,
+    ShareDirection,
+} from './domain/message'
+export type { Reaction, ReactionKind, ReactionTextRange } from './domain/reaction'
+export type { Service } from './domain/service'
+
+// -----------------------------------------------
+// Domain — values
+// -----------------------------------------------
+
+export type { ChatServicePrefix } from './domain/chat-id'
+export { ChatId } from './domain/chat-id'
+export type { MessageTarget } from './domain/routing'
+export { resolveTarget } from './domain/routing'
+export { isURL, validateRecipient } from './domain/validate'
+
+// -----------------------------------------------
+// Domain — errors
+// -----------------------------------------------
+
+export type { ErrorCode } from './domain/errors'
 export {
     ConfigError,
     DatabaseError,
-    type ErrorCode,
     IMessageError,
     PlatformError,
     SendError,
-    WebhookError,
-} from './core/errors'
-export { IMessageSDK } from './core/sdk'
-export type { SendOptions, SendResult, SendToGroupOptions } from './core/sender'
-// Watcher types
-export type { WatcherEvents } from './core/watcher'
-export { definePlugin, type Plugin, type PluginHooks } from './plugins/core'
-export { type LoggerOptions, loggerPlugin } from './plugins/logger'
-// Advanced types
+    toError,
+    toErrorMessage,
+} from './domain/errors'
+
+// -----------------------------------------------
+// Application
+// -----------------------------------------------
+
+export type { ChainResult } from './application/message-chain'
+export { MessageChain } from './application/message-chain'
+export type { DispatchEvents, MessageCallback } from './application/message-dispatcher'
+export { MessageDispatcher } from './application/message-dispatcher'
 export type {
-    Mapper,
-    Predicate,
-    Recipient,
-} from './types/advanced'
-// Configuration types
+    OnceTask,
+    RecurrenceInterval,
+    RecurringOptions,
+    RecurringTask,
+    ScheduledTask,
+    ScheduleOptions,
+    SchedulerEvents,
+    SchedulerOptions,
+    TaskStatus,
+} from './application/message-scheduler'
+export { MessageScheduler } from './application/message-scheduler'
+export { parseAtExpression, parseDuration } from './application/reminder-time'
+export type { Reminder, ReminderOptions } from './application/reminders'
+export { Reminders } from './application/reminders'
+export type { SendPort } from './application/send-port'
+export type { SendContent, SendRequest, SendResult } from './types/send'
+
+// -----------------------------------------------
+// Query types
+// -----------------------------------------------
+
+export type { ChatQuery, MessageQuery } from './types/query'
+
+// -----------------------------------------------
+// Plugin types
+// -----------------------------------------------
+
 export type {
-    IMessageConfig,
-    ResolvedConfig,
-    RetryConfig,
-    TempFileConfig,
-    WatcherConfig,
-    WebhookConfig,
-} from './types/config'
-// Message types
-export type {
-    Attachment,
-    ChatSummary,
-    ListChatsOptions,
-    Message,
-    MessageFilter,
-    MessageQueryResult,
-    ServiceType,
-    UnreadMessagesResult,
-} from './types/message'
+    AfterChatQueryContext,
+    AfterMessageQueryContext,
+    AfterSendContext,
+    BeforeChatQueryContext,
+    BeforeMessageQueryContext,
+    BeforeSendContext,
+    NewMessageContext,
+    Plugin,
+    PluginErrorContext,
+    PluginHooks,
+} from './types/plugin'
 
-export { asRecipient, isMacOS, requireMacOS } from './utils/platform'
+// -----------------------------------------------
+// Infra — public utilities
+// -----------------------------------------------
 
-// Message scheduler
-export {
-    MessageScheduler,
-    type RecurrenceInterval,
-    type RecurringMessage,
-    type RecurringScheduleOptions,
-    type ScheduledMessage,
-    type ScheduledMessageStatus,
-    type ScheduleOptions,
-    type SchedulerConfig,
-    type SchedulerEvents,
-} from './utils/scheduler'
+export { getDefaultDatabasePath, requireMacOS } from './infra/platform'
+export type { LoggerOptions, LogLevel } from './infra/plugin/logger'
+export { loggerPlugin } from './infra/plugin/logger'
+export { definePlugin } from './infra/plugin/manager'
 
-// Smart reminders (user-friendly scheduler wrapper)
-export { Reminders, type Reminder, type ReminderOptions } from './utils/reminders'
+// -----------------------------------------------
+// Infra — attachment file helpers
+// -----------------------------------------------
 
-// Attachment helpers
+export type { AttachmentFileInfo } from './infra/attachments'
 export {
     attachmentExists,
-    downloadAttachment,
+    copyAttachmentFile,
     getAttachmentExtension,
-    getAttachmentMetadata,
+    getAttachmentFileInfo,
     getAttachmentSize,
     isAudioAttachment,
     isImageAttachment,
     isVideoAttachment,
-    readAttachment,
-} from './helpers/attachment'
+    readAttachmentBytes,
+} from './infra/attachments'

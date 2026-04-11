@@ -4,46 +4,57 @@
  * Tests for all utility functions and helpers
  */
 
-import { beforeEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
+import { LIMITS } from '../src/config'
+import { IMessageError } from '../src/domain/errors'
 
 describe('Platform Utils', () => {
-    describe('asRecipient', () => {
-        // We'll need to dynamically import to avoid platform check during module load
+    describe('validateRecipient', () => {
         it('should validate phone numbers', async () => {
-            const { asRecipient } = await import('../src/types/advanced')
+            const { validateRecipient } = await import('../src/domain/validate')
 
-            expect(asRecipient('+1234567890')).toBe('+1234567890')
-            expect(asRecipient('+1 (234) 567-8900')).toBe('+1 (234) 567-8900')
-            expect(asRecipient('1234567890')).toBe('1234567890')
+            expect(validateRecipient('+1234567890')).toBe('+1234567890')
+            expect(validateRecipient('+1 (234) 567-8900')).toBe('+1 (234) 567-8900')
+            expect(validateRecipient('1234567890')).toBe('1234567890')
         })
 
         it('should validate email addresses', async () => {
-            const { asRecipient } = await import('../src/types/advanced')
+            const { validateRecipient } = await import('../src/domain/validate')
 
-            expect(asRecipient('user@example.com')).toBe('user@example.com')
-            expect(asRecipient('test.user+tag@example.co.uk')).toBe('test.user+tag@example.co.uk')
+            expect(validateRecipient('user@example.com')).toBe('user@example.com')
+            expect(validateRecipient('test.user+tag@example.co.uk')).toBe('test.user+tag@example.co.uk')
         })
 
         it('should throw error for invalid recipients', async () => {
-            const { asRecipient } = await import('../src/types/advanced')
+            const { validateRecipient } = await import('../src/domain/validate')
 
-            expect(() => asRecipient('')).toThrow('Recipient cannot be empty')
-            expect(() => asRecipient('   ')).toThrow('Recipient cannot be empty')
-            expect(() => asRecipient('invalid')).toThrow('Invalid recipient format')
-            expect(() => asRecipient('@invalid')).toThrow('Invalid recipient format')
+            expect(() => validateRecipient('')).toThrow('Recipient cannot be empty')
+            expect(() => validateRecipient('   ')).toThrow('Invalid recipient format')
+            expect(() => validateRecipient('invalid')).toThrow('Invalid recipient format')
+            expect(() => validateRecipient('@invalid')).toThrow('Invalid recipient format')
+            expect(() => validateRecipient('invalid')).toThrow(IMessageError)
         })
 
-        it('should trim whitespace', async () => {
-            const { asRecipient } = await import('../src/types/advanced')
+        it('should reject recipient strings over max length', async () => {
+            const { validateRecipient } = await import('../src/domain/validate')
 
-            expect(asRecipient('  user@example.com  ')).toBe('user@example.com')
-            expect(asRecipient('\n+1234567890\t')).toBe('+1234567890')
+            const tooLong = 'a'.repeat(LIMITS.maxRecipientLength + 1)
+            expect(() => validateRecipient(tooLong)).toThrow(/Recipient exceeds maximum length/)
+            expect(() => validateRecipient(tooLong)).toThrow(IMessageError)
+        })
+
+        it('should reject whitespace-padded recipients (no trimming)', async () => {
+            const { validateRecipient } = await import('../src/domain/validate')
+
+            // The new validate does not trim — whitespace-padded strings are invalid
+            expect(() => validateRecipient('  user@example.com  ')).toThrow('Invalid recipient format')
+            expect(() => validateRecipient('\n+1234567890\t')).toThrow('Invalid recipient format')
         })
     })
 
     describe('isURL', () => {
         it('should validate HTTP(S) URLs', async () => {
-            const { isURL } = await import('../src/types/advanced')
+            const { isURL } = await import('../src/domain/validate')
 
             expect(isURL('https://example.com')).toBe(true)
             expect(isURL('http://example.com')).toBe(true)
@@ -51,7 +62,7 @@ describe('Platform Utils', () => {
         })
 
         it('should reject invalid URLs', async () => {
-            const { isURL } = await import('../src/types/advanced')
+            const { isURL } = await import('../src/domain/validate')
 
             expect(isURL('ftp://example.com')).toBe(false)
             expect(isURL('example.com')).toBe(false)
@@ -64,7 +75,7 @@ describe('Platform Utils', () => {
 describe('Common Utils', () => {
     describe('delay', () => {
         it('should delay execution', async () => {
-            const { delay } = await import('../src/utils/common')
+            const { delay } = await import('../src/utils/async')
 
             const start = Date.now()
             await delay(100)
@@ -75,7 +86,7 @@ describe('Common Utils', () => {
         })
 
         it('should handle zero delay', async () => {
-            const { delay } = await import('../src/utils/common')
+            const { delay } = await import('../src/utils/async')
 
             const start = Date.now()
             await delay(0)
@@ -85,9 +96,29 @@ describe('Common Utils', () => {
         })
     })
 
+    describe('retry', () => {
+        it('should treat attempts below 1 as a single attempt', async () => {
+            const { retry } = await import('../src/utils/async')
+
+            let calls = 0
+
+            await expect(
+                retry(
+                    async () => {
+                        calls++
+                        throw new Error('boom')
+                    },
+                    { attempts: 0 }
+                )
+            ).rejects.toThrow('boom')
+
+            expect(calls).toBe(1)
+        })
+    })
+
     describe('validateMessageContent', () => {
         it('should accept text only', async () => {
-            const { validateMessageContent } = await import('../src/utils/common')
+            const { validateMessageContent } = await import('../src/domain/validate')
 
             const result = validateMessageContent('Hello', undefined)
             expect(result.hasText).toBe(true)
@@ -95,7 +126,7 @@ describe('Common Utils', () => {
         })
 
         it('should accept attachments only', async () => {
-            const { validateMessageContent } = await import('../src/utils/common')
+            const { validateMessageContent } = await import('../src/domain/validate')
 
             const result = validateMessageContent(undefined, ['/path/to/file.jpg'])
             expect(result.hasText).toBe(false)
@@ -103,7 +134,7 @@ describe('Common Utils', () => {
         })
 
         it('should accept both text and attachments', async () => {
-            const { validateMessageContent } = await import('../src/utils/common')
+            const { validateMessageContent } = await import('../src/domain/validate')
 
             const result = validateMessageContent('Hello', ['/path/to/file.jpg'])
             expect(result.hasText).toBe(true)
@@ -111,131 +142,51 @@ describe('Common Utils', () => {
         })
 
         it('should reject empty content', async () => {
-            const { validateMessageContent } = await import('../src/utils/common')
+            const { validateMessageContent } = await import('../src/domain/validate')
 
             expect(() => validateMessageContent(undefined, undefined)).toThrow(
-                'Message must contain text or attachments'
+                'Message must have text or at least one attachment'
             )
-            expect(() => validateMessageContent('', [])).toThrow('Message must contain text or attachments')
-            expect(() => validateMessageContent('   ', [])).toThrow('Message must contain text or attachments')
+            expect(() => validateMessageContent('', [])).toThrow('Message must have text or at least one attachment')
         })
 
-        it('should handle whitespace-only text', async () => {
-            const { validateMessageContent } = await import('../src/utils/common')
+        it('should handle whitespace-only text as having no text', async () => {
+            const { validateMessageContent } = await import('../src/domain/validate')
 
-            expect(() => validateMessageContent('   ', undefined)).toThrow('Message must contain text or attachments')
-        })
-    })
-
-    describe('validateChatId', () => {
-        it('should accept pure GUID format (group chat)', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('chat61321855167474084')).not.toThrow()
-            expect(() => validateChatId('chat45e2b868ce1e43da89af262922733382')).not.toThrow()
+            // The new validateMessageContent checks `text !== ''` but does not trim.
+            // Whitespace-only text is considered valid text content.
+            const result = validateMessageContent('   ', undefined)
+            expect(result.hasText).toBe(true)
+            expect(result.hasAttachments).toBe(false)
         })
 
-        it('should accept legacy DM format', async () => {
-            const { validateChatId } = await import('../src/utils/common')
+        it('should reject text exceeding max length', async () => {
+            const { validateMessageContent } = await import('../src/domain/validate')
 
-            expect(() => validateChatId('iMessage;+1234567890')).not.toThrow()
-            expect(() => validateChatId('SMS;+1234567890')).not.toThrow()
-            expect(() => validateChatId('iMessage;user@example.com')).not.toThrow()
-            expect(() => validateChatId('any;+1234567890')).not.toThrow()
+            const longText = 'x'.repeat(LIMITS.maxTextLength + 1)
+            expect(() => validateMessageContent(longText, undefined)).toThrow('exceeds maximum length')
         })
 
-        it('should accept 3-part DM format (macOS Tahoe)', async () => {
-            const { validateChatId } = await import('../src/utils/common')
+        it('should reject attachments exceeding max count', async () => {
+            const { validateMessageContent } = await import('../src/domain/validate')
 
-            expect(() => validateChatId('any;-;+1234567890')).not.toThrow()
-            expect(() => validateChatId('any;-;user@example.com')).not.toThrow()
-            expect(() => validateChatId('iMessage;-;+1234567890')).not.toThrow()
+            const paths = Array.from({ length: LIMITS.maxAttachmentsPerMessage + 1 }, (_, i) => `/f${i}`)
+            expect(() => validateMessageContent(undefined, paths)).toThrow('Too many attachments')
         })
 
-        it('should accept group format (legacy and Tahoe)', async () => {
-            const { validateChatId } = await import('../src/utils/common')
+        it('should accept attachments at the limit', async () => {
+            const { validateMessageContent } = await import('../src/domain/validate')
 
-            expect(() => validateChatId('iMessage;+;chat61321855167474084')).not.toThrow()
-            expect(() => validateChatId('any;+;chat687179757169191512')).not.toThrow()
-            expect(() => validateChatId('iMessage;+;chat45e2b868ce1e43da89af262922733382')).not.toThrow()
-        })
-
-        it('should reject invalid formats', async () => {
-            const { validateChatId } = await import('../src/utils/common')
-
-            expect(() => validateChatId('')).toThrow('chatId must be a non-empty string')
-            expect(() => validateChatId('invalid')).toThrow('Invalid chatId format: GUID too short')
-            expect(() => validateChatId('iMessage;+;chat123')).toThrow('Invalid chatId format: GUID too short')
-            expect(() => validateChatId('InvalidService;+1234567890')).toThrow('Invalid chatId format')
-            expect(() => validateChatId('iMessage;')).toThrow('Invalid chatId format')
-            expect(() => validateChatId('any;-;')).toThrow('Invalid chatId format: missing address')
-            expect(() => validateChatId('a;b;c')).toThrow('Invalid chatId format: unrecognized semicolon pattern')
-        })
-    })
-
-    describe('normalizeChatId', () => {
-        it('should strip service prefix from group chatIds', async () => {
-            const { normalizeChatId } = await import('../src/utils/common')
-
-            expect(normalizeChatId('iMessage;+;chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('any;+;chat687179757169191512')).toBe('chat687179757169191512')
-        })
-
-        it('should return unchanged for non-group formats', async () => {
-            const { normalizeChatId } = await import('../src/utils/common')
-
-            expect(normalizeChatId('chat61321855167474084')).toBe('chat61321855167474084')
-            expect(normalizeChatId('iMessage;+1234567890')).toBe('iMessage;+1234567890')
-            expect(normalizeChatId('any;-;+1234567890')).toBe('any;-;+1234567890')
-        })
-    })
-
-    describe('isGroupChatId', () => {
-        it('should detect group formats', async () => {
-            const { isGroupChatId } = await import('../src/utils/common')
-
-            expect(isGroupChatId('iMessage;+;chat61321855167474084')).toBe(true)
-            expect(isGroupChatId('any;+;chat687179757169191512')).toBe(true)
-            expect(isGroupChatId('chat493787071395575843')).toBe(true)
-        })
-
-        it('should reject non-group formats', async () => {
-            const { isGroupChatId } = await import('../src/utils/common')
-
-            expect(isGroupChatId('any;-;+1234567890')).toBe(false)
-            expect(isGroupChatId('iMessage;+1234567890')).toBe(false)
-            expect(isGroupChatId('+1234567890')).toBe(false)
-        })
-    })
-
-    describe('extractRecipientFromChatId', () => {
-        it('should extract from 3-part DM format', async () => {
-            const { extractRecipientFromChatId } = await import('../src/utils/common')
-
-            expect(extractRecipientFromChatId('any;-;+1234567890')).toBe('+1234567890')
-            expect(extractRecipientFromChatId('iMessage;-;user@example.com')).toBe('user@example.com')
-        })
-
-        it('should extract from legacy 2-part DM format', async () => {
-            const { extractRecipientFromChatId } = await import('../src/utils/common')
-
-            expect(extractRecipientFromChatId('iMessage;+1234567890')).toBe('+1234567890')
-            expect(extractRecipientFromChatId('SMS;+1234567890')).toBe('+1234567890')
-        })
-
-        it('should return null for group and bare formats', async () => {
-            const { extractRecipientFromChatId } = await import('../src/utils/common')
-
-            expect(extractRecipientFromChatId('any;+;chat687179757169191512')).toBeNull()
-            expect(extractRecipientFromChatId('chat61321855167474084')).toBeNull()
-            expect(extractRecipientFromChatId('+1234567890')).toBeNull()
+            const paths = Array.from({ length: LIMITS.maxAttachmentsPerMessage }, (_, i) => `/f${i}`)
+            const result = validateMessageContent(undefined, paths)
+            expect(result.hasAttachments).toBe(true)
         })
     })
 })
 
 describe('Semaphore', () => {
     it('should limit concurrency', async () => {
-        const { Semaphore } = await import('../src/utils/semaphore')
+        const { Semaphore } = await import('../src/utils/async')
 
         const semaphore = new Semaphore(2)
         let concurrent = 0
@@ -259,7 +210,7 @@ describe('Semaphore', () => {
     })
 
     it('should support run() helper', async () => {
-        const { Semaphore } = await import('../src/utils/semaphore')
+        const { Semaphore } = await import('../src/utils/async')
 
         const semaphore = new Semaphore(1)
         const results: number[] = []
@@ -281,14 +232,14 @@ describe('Semaphore', () => {
     })
 
     it('should throw error for invalid limit', async () => {
-        const { Semaphore } = await import('../src/utils/semaphore')
+        const { Semaphore } = await import('../src/utils/async')
 
         expect(() => new Semaphore(0)).toThrow('Concurrency limit must be greater than 0')
         expect(() => new Semaphore(-1)).toThrow('Concurrency limit must be greater than 0')
     })
 
     it('should handle errors in tasks', async () => {
-        const { Semaphore } = await import('../src/utils/semaphore')
+        const { Semaphore } = await import('../src/utils/async')
 
         const semaphore = new Semaphore(2)
 
@@ -300,7 +251,7 @@ describe('Semaphore', () => {
     })
 
     it('should release semaphore even if task fails', async () => {
-        const { Semaphore } = await import('../src/utils/semaphore')
+        const { Semaphore } = await import('../src/utils/async')
 
         const semaphore = new Semaphore(1)
 

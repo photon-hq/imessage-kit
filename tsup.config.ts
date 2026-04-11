@@ -14,8 +14,5 @@ export default defineConfig({
     splitting: false,
     bundle: true,
     // External dependencies - will be resolved at runtime
-    external: [
-        'bun:sqlite', // Bun runtime
-        'better-sqlite3', // Node.js runtime
-    ],
+    external: ['bun:sqlite', 'better-sqlite3', '@parseaple/typedstream'],
 })

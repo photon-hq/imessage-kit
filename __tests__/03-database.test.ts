@@ -1,22 +1,21 @@
 /**
  * Database Tests
  *
- * Tests for IMessageDatabase class
+ * Tests for MessagesDatabaseReader class
  */
 
 import type { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { IMessageDatabase } from '../src/core/database'
-import { DatabaseError } from '../src/core/errors'
+import { MessagesDatabaseReader } from '../src/infra/db/reader'
 import { createMockDatabase, insertTestMessage } from './setup'
 
-describe('IMessageDatabase', () => {
+describe('MessagesDatabaseReader', () => {
     let mockDb: { db: Database; path: string; cleanup: () => void }
-    let database: IMessageDatabase
+    let database: MessagesDatabaseReader
 
     beforeEach(() => {
         mockDb = createMockDatabase()
-        database = new IMessageDatabase(mockDb.path)
+        database = new MessagesDatabaseReader(mockDb.path)
     })
 
     afterEach(() => {
@@ -26,73 +25,162 @@ describe('IMessageDatabase', () => {
 
     describe('Constructor', () => {
         it('should open database successfully', () => {
-            expect(database).toBeInstanceOf(IMessageDatabase)
+            expect(database).toBeInstanceOf(MessagesDatabaseReader)
         })
 
-        it('should throw DatabaseError for invalid path', async () => {
-            const invalidDb = new IMessageDatabase('/non/existent/path.db')
-            await expect(invalidDb.getMessages()).rejects.toThrow()
+        it('should throw DatabaseError for invalid path', () => {
+            expect(() => new MessagesDatabaseReader('/non/existent/path.db')).toThrow(/Failed to open database/)
         })
     })
 
     describe('getMessages', () => {
+        const baseDate = Date.now()
+
         beforeEach(() => {
-            // Insert test messages
+            // Insert test messages with distinct dates for deterministic ORDER BY
             insertTestMessage(mockDb.db, {
                 text: 'Hello',
                 sender: '+1234567890',
                 isRead: false,
                 isFromMe: false,
+                date: baseDate - 2000,
             })
             insertTestMessage(mockDb.db, {
                 text: 'World',
                 sender: '+0987654321',
                 isRead: true,
                 isFromMe: false,
+                date: baseDate - 1000,
             })
             insertTestMessage(mockDb.db, {
                 text: 'From me',
                 sender: 'me@example.com',
                 isRead: true,
                 isFromMe: true,
+                date: baseDate,
             })
         })
 
-        it('should query all messages (excluding own by default)', async () => {
-            const result = await database.getMessages()
+        it('should query all messages (including own by default)', async () => {
+            const messages = await database.getMessages()
 
-            expect(result.messages.length).toBe(2) // Excludes isFromMe=true by default
-            expect(result.total).toBe(2)
+            expect(messages.length).toBe(3)
+            expect(messages.some((m) => m.isFromMe)).toBe(true)
         })
 
-        it('should include own messages when excludeOwnMessages is false', async () => {
-            const result = await database.getMessages({ excludeOwnMessages: false })
+        it('should filter to only others messages with isFromMe: false', async () => {
+            const messages = await database.getMessages({ isFromMe: false })
 
-            expect(result.messages.length).toBe(3) // Includes isFromMe=true
-            expect(result.total).toBe(3)
-            expect(result.messages.some((m) => m.isFromMe)).toBe(true)
+            expect(messages.length).toBe(2)
+            expect(messages.every((m) => !m.isFromMe)).toBe(true)
+        })
+
+        it('should filter to only own messages with isFromMe: true', async () => {
+            const messages = await database.getMessages({ isFromMe: true })
+
+            expect(messages.length).toBe(1)
+            expect(messages.every((m) => m.isFromMe)).toBe(true)
         })
 
         it('should filter unread messages', async () => {
-            const result = await database.getMessages({ unreadOnly: true })
+            const messages = await database.getMessages({ unreadOnly: true })
 
-            expect(result.messages.length).toBe(1)
-            expect(result.messages[0]?.isRead).toBe(false)
-            expect(result.unreadCount).toBe(1)
+            expect(messages.length).toBe(1)
+            expect(messages[0]?.isRead).toBe(false)
         })
 
-        it('should filter by sender', async () => {
-            const result = await database.getMessages({ sender: '+1234567890' })
+        it('should filter by participant', async () => {
+            const messages = await database.getMessages({ participant: '+1234567890' })
 
-            expect(result.messages.length).toBe(1)
-            expect(result.messages[0]?.sender).toBe('+1234567890')
-            expect(result.messages[0]?.text).toBe('Hello')
+            expect(messages.length).toBe(1)
+            expect(messages[0]?.participant).toBe('+1234567890')
+            expect(messages[0]?.text).toBe('Hello')
         })
 
         it('should limit results', async () => {
-            const result = await database.getMessages({ limit: 2 })
+            const messages = await database.getMessages({ limit: 2 })
 
-            expect(result.messages.length).toBe(2)
+            expect(messages.length).toBe(2)
+        })
+
+        it('should support offset without requiring an explicit limit', async () => {
+            const messages = await database.getMessages({ offset: 1 })
+
+            expect(messages.length).toBe(2)
+            expect(messages[0]?.text).toBe('World')
+            expect(messages[1]?.text).toBe('Hello')
+        })
+
+        it('should apply search before limit truncation', async () => {
+            mockDb.cleanup()
+            mockDb = createMockDatabase()
+            database = new MessagesDatabaseReader(mockDb.path)
+
+            const now = Date.now()
+
+            insertTestMessage(mockDb.db, {
+                text: 'match-old',
+                sender: '+1234567890',
+                date: now - 3000,
+            })
+            insertTestMessage(mockDb.db, {
+                text: 'noise-new-1',
+                sender: '+1234567890',
+                date: now - 2000,
+            })
+            insertTestMessage(mockDb.db, {
+                text: 'noise-new-2',
+                sender: '+1234567890',
+                date: now - 1000,
+            })
+
+            const messages = await database.getMessages({ search: 'match', limit: 2 })
+
+            expect(messages).toHaveLength(1)
+            expect(messages[0]?.text).toBe('match-old')
+        })
+
+        it('should recover chatId from ck_chat_id when chat join is missing', async () => {
+            const messageId = insertTestMessage(mockDb.db, {
+                text: 'Recovered from ck_chat_id',
+                sender: '+1234567890',
+                service: 'iMessage',
+            })
+
+            mockDb.db.prepare('DELETE FROM chat_message_join WHERE message_id = ?').run(messageId)
+            mockDb.db.prepare('UPDATE message SET ck_chat_id = ? WHERE ROWID = ?').run('any;-;+1234567890', messageId)
+
+            const message = (await database.getMessages()).find((item) => item.rowId === messageId)
+
+            expect(message?.chatId).toBe('any;-;+1234567890')
+            expect(message?.chatKind).toBe('dm')
+        })
+
+        it('should recover chatId from destination_caller_id when chat and handle are missing', async () => {
+            const MAC_EPOCH = new Date('2001-01-01T00:00:00Z').getTime()
+            const macTimestamp = (Date.now() - MAC_EPOCH) * 1_000_000
+
+            mockDb.db
+                .prepare(
+                    `
+                        INSERT INTO message (
+                            guid,
+                            text,
+                            service,
+                            date,
+                            is_from_me,
+                            is_sent,
+                            destination_caller_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    `
+                )
+                .run('orphan-message-guid', 'Recovered from destination', 'SMS', macTimestamp, 1, 1, '+8618722049982')
+
+            const row = mockDb.db.query('SELECT last_insert_rowid() as id').get() as { id: number }
+            const message = (await database.getMessages({ isFromMe: true })).find((item) => item.rowId === row.id)
+
+            expect(message?.chatId).toBe('SMS;-;+8618722049982')
+            expect(message?.chatKind).toBe('dm')
         })
 
         it('should filter by service type', async () => {
@@ -102,40 +190,38 @@ describe('IMessageDatabase', () => {
                 service: 'SMS',
             })
 
-            const result = await database.getMessages({ service: 'SMS' })
+            const messages = await database.getMessages({ service: 'SMS' })
 
-            expect(result.messages.length).toBe(1)
-            expect(result.messages[0]?.service).toBe('SMS')
+            expect(messages.length).toBe(1)
+            expect(messages[0]?.service).toBe('SMS')
         })
 
         it('should filter by date', async () => {
             const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
-            const result = await database.getMessages({ since: yesterday })
+            const messages = await database.getMessages({ since: yesterday })
 
-            expect(result.messages.length).toBeGreaterThan(0)
+            expect(messages.length).toBeGreaterThan(0)
         })
 
         it('should return message with correct structure', async () => {
-            const result = await database.getMessages({ limit: 1 })
-            const message = result.messages[0]
+            const messages = await database.getMessages({ limit: 1 })
+            const message = messages[0]
 
             expect(message).toBeDefined()
+            expect(typeof message?.rowId).toBe('number')
             expect(typeof message?.id).toBe('string')
-            expect(typeof message?.guid).toBe('string')
-            expect(typeof message?.sender).toBe('string')
+            expect(typeof message?.participant).toBe('string')
             expect(typeof message?.isRead).toBe('boolean')
             expect(typeof message?.isFromMe).toBe('boolean')
-            expect(typeof message?.isGroupChat).toBe('boolean')
-            expect(message?.date).toBeInstanceOf(Date)
+            expect(typeof message?.chatKind).toBe('string')
+            expect(message?.createdAt).toBeInstanceOf(Date)
             expect(Array.isArray(message?.attachments)).toBe(true)
         })
 
         it('should return empty result for no matches', async () => {
-            const result = await database.getMessages({ sender: 'nonexistent@example.com' })
+            const messages = await database.getMessages({ participant: 'nonexistent@example.com' })
 
-            expect(result.messages.length).toBe(0)
-            expect(result.total).toBe(0)
-            expect(result.unreadCount).toBe(0)
+            expect(messages.length).toBe(0)
         })
     })
 
@@ -163,24 +249,20 @@ describe('IMessageDatabase', () => {
             })
         })
 
-        it('should group unread messages by sender', async () => {
-            const result = await database.getUnreadMessages()
+        it('should return unread messages', async () => {
+            const messages = await database.getMessages({ unreadOnly: true })
 
-            expect(result.grouped.size).toBe(2)
-            expect(result.total).toBe(3)
-            expect(result.grouped.get('+1111111111')?.length).toBe(2)
-            expect(result.grouped.get('+2222222222')?.length).toBe(1)
-            expect(result.grouped.has('+3333333333')).toBe(false)
+            expect(messages.length).toBe(3)
+            expect(messages.every((m) => !m.isRead)).toBe(true)
         })
 
-        it('should return empty map when no unread messages', async () => {
+        it('should return empty array when no unread messages', async () => {
             // Mark all as read
             mockDb.db.prepare('UPDATE message SET is_read = 1').run()
 
-            const result = await database.getUnreadMessages()
+            const messages = await database.getMessages({ unreadOnly: true })
 
-            expect(result.grouped.size).toBe(0)
-            expect(result.total).toBe(0)
+            expect(messages.length).toBe(0)
         })
     })
 
@@ -192,8 +274,8 @@ describe('IMessageDatabase', () => {
                 service: 'iMessage',
             })
 
-            const result = await database.getMessages()
-            expect(result.messages[0]?.service).toBe('iMessage')
+            const messages = await database.getMessages()
+            expect(messages[0]?.service).toBe('iMessage')
         })
 
         it('should map SMS service', async () => {
@@ -203,19 +285,19 @@ describe('IMessageDatabase', () => {
                 service: 'SMS',
             })
 
-            const result = await database.getMessages()
-            expect(result.messages[0]?.service).toBe('SMS')
+            const messages = await database.getMessages()
+            expect(messages[0]?.service).toBe('SMS')
         })
 
-        it('should default to iMessage for unknown service', async () => {
+        it('should map unknown service values to unknown', async () => {
             insertTestMessage(mockDb.db, {
                 text: 'Unknown',
                 sender: '+1234567890',
                 service: 'unknown',
             })
 
-            const result = await database.getMessages()
-            expect(result.messages[0]?.service).toBe('iMessage')
+            const messages = await database.getMessages()
+            expect(messages[0]?.service).toBe('unknown')
         })
     })
 

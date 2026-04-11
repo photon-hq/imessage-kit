@@ -3,14 +3,14 @@ import { IMessageSDK, definePlugin } from '../src'
 // Create custom plugin
 const myPlugin = definePlugin({
     name: 'my-plugin',
-    onBeforeSend: (to, content) => {
-        console.log(`Sending to ${to}:`, content.text)
+    onBeforeSend: ({ request }) => {
+        console.log(`Sending to ${request.to}:`, request.text)
     },
-    onAfterSend: (to, result) => {
+    onAfterSend: ({ result }) => {
         console.log(`Sent at ${result.sentAt}`)
     },
-    onNewMessage: (msg) => {
-        console.log(`New message: ${msg.text}`)
+    onNewMessage: ({ message }) => {
+        console.log(`New message: ${message.text}`)
     }
 })
 

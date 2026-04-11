@@ -5,11 +5,11 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { ConfigError, DatabaseError, IMessageError, PlatformError, SendError, WebhookError } from '../src/core/errors'
+import { ConfigError, DatabaseError, IMessageError, PlatformError, SendError } from '../src/domain/errors'
 
 describe('IMessageError', () => {
     it('should create error with code and message', () => {
-        const error = new IMessageError('DATABASE', 'Test error')
+        const error = DatabaseError('Test error')
 
         expect(error).toBeInstanceOf(Error)
         expect(error).toBeInstanceOf(IMessageError)
@@ -19,29 +19,29 @@ describe('IMessageError', () => {
     })
 
     it('should have stack trace', () => {
-        const error = new IMessageError('SEND', 'Send failed')
+        const error = SendError('Send failed')
 
         expect(error.stack).toBeDefined()
         expect(error.stack).toContain('IMessageError')
     })
 
-    it('should support type guard', () => {
-        const error = new IMessageError('WEBHOOK', 'Webhook failed')
+    it('should support instanceof', () => {
+        const error = SendError('Send failed')
         const regularError = new Error('Regular error')
 
-        expect(IMessageError.is(error)).toBe(true)
-        expect(IMessageError.is(regularError)).toBe(false)
-        expect(IMessageError.is(null)).toBe(false)
-        expect(IMessageError.is(undefined)).toBe(false)
-        expect(IMessageError.is('string')).toBe(false)
+        expect(error instanceof IMessageError).toBe(true)
+        expect(regularError instanceof IMessageError).toBe(false)
+        expect(null instanceof IMessageError).toBe(false)
+        expect(undefined instanceof IMessageError).toBe(false)
+        expect(('string' as unknown) instanceof IMessageError).toBe(false)
     })
 
-    it('should check error code with is() method', () => {
-        const error = new IMessageError('DATABASE', 'DB error')
+    it('should compare code with ===', () => {
+        const error = DatabaseError('DB error')
 
-        expect(error.is('DATABASE')).toBe(true)
-        expect(error.is('SEND')).toBe(false)
-        expect(error.is('PLATFORM')).toBe(false)
+        expect(error.code === 'DATABASE').toBe(true)
+        expect(error.code === 'SEND').toBe(false)
+        expect(error.code === 'PLATFORM').toBe(false)
     })
 })
 
@@ -75,14 +75,6 @@ describe('Error Factory Functions', () => {
         expect(error).toBeInstanceOf(IMessageError)
         expect(error.code).toBe('SEND')
         expect(error.message).toBe('Failed to send message')
-    })
-
-    it('should create WebhookError', () => {
-        const error = WebhookError('Webhook request failed')
-
-        expect(error).toBeInstanceOf(IMessageError)
-        expect(error.code).toBe('WEBHOOK')
-        expect(error.message).toBe('Webhook request failed')
     })
 
     it('should create ConfigError', () => {
