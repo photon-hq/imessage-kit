@@ -1,6 +1,6 @@
 {
     "name": "@photon-ai/imessage-kit",
-    "version": "3.0.0-rc.1",
+    "version": "3.0.0-rc.2",
     "description": "Type-safe macOS iMessage SDK for TypeScript",
     "author": "GreatSomething",
     "license": "MIT",
@@ -71,6 +71,5 @@
     "engines": {
         "node": ">=20.0.0"
     },
-    "os": ["darwin"],
     "sideEffects": false
 }
