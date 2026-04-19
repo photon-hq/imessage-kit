@@ -9,20 +9,14 @@
 // SDK
 // -----------------------------------------------
 
-export type {
-    SendBatchItem,
-    SendBatchItemResult,
-    SendBatchOptions,
-    SendBatchResult,
-    WatcherEvents,
-} from './sdk'
+export type { DispatchEvents } from './application/message-dispatcher'
 export { IMessageSDK } from './sdk'
 
 // -----------------------------------------------
 // Config
 // -----------------------------------------------
 
-export { BOUNDS, LIMITS } from './config'
+export { BOUNDS } from './sdk-bounds'
 export type { IMessageConfig } from './types/config'
 
 // -----------------------------------------------
@@ -51,48 +45,21 @@ export type { ChatServicePrefix } from './domain/chat-id'
 export { ChatId } from './domain/chat-id'
 export type { MessageTarget } from './domain/routing'
 export { resolveTarget } from './domain/routing'
-export { isURL, validateRecipient } from './domain/validate'
 
 // -----------------------------------------------
 // Domain — errors
 // -----------------------------------------------
 
 export type { ErrorCode } from './domain/errors'
-export {
-    ConfigError,
-    DatabaseError,
-    IMessageError,
-    PlatformError,
-    SendError,
-    toError,
-    toErrorMessage,
-} from './domain/errors'
+export { ConfigError, DatabaseError, IMessageError, PlatformError, SendError } from './domain/errors'
 
 // -----------------------------------------------
 // Application
 // -----------------------------------------------
 
-export type { ChainResult } from './application/message-chain'
-export { MessageChain } from './application/message-chain'
-export type { DispatchEvents, MessageCallback } from './application/message-dispatcher'
-export { MessageDispatcher } from './application/message-dispatcher'
-export type {
-    OnceTask,
-    RecurrenceInterval,
-    RecurringOptions,
-    RecurringTask,
-    ScheduledTask,
-    ScheduleOptions,
-    SchedulerEvents,
-    SchedulerOptions,
-    TaskStatus,
-} from './application/message-scheduler'
-export { MessageScheduler } from './application/message-scheduler'
-export { parseAtExpression, parseDuration } from './application/reminder-time'
-export type { Reminder, ReminderOptions } from './application/reminders'
-export { Reminders } from './application/reminders'
+export type { MessageCallback } from './application/message-dispatcher'
 export type { SendPort } from './application/send-port'
-export type { SendContent, SendRequest, SendResult } from './types/send'
+export type { SendRequest } from './types/send'
 
 // -----------------------------------------------
 // Query types
@@ -111,7 +78,7 @@ export type {
     BeforeChatQueryContext,
     BeforeMessageQueryContext,
     BeforeSendContext,
-    NewMessageContext,
+    MessageContext,
     Plugin,
     PluginErrorContext,
     PluginHooks,
@@ -122,23 +89,16 @@ export type {
 // -----------------------------------------------
 
 export { getDefaultDatabasePath, requireMacOS } from './infra/platform'
-export type { LoggerOptions, LogLevel } from './infra/plugin/logger'
-export { loggerPlugin } from './infra/plugin/logger'
-export { definePlugin } from './infra/plugin/manager'
+export { definePlugin } from './infra/plugin'
 
 // -----------------------------------------------
 // Infra — attachment file helpers
 // -----------------------------------------------
 
-export type { AttachmentFileInfo } from './infra/attachments'
 export {
     attachmentExists,
-    copyAttachmentFile,
     getAttachmentExtension,
-    getAttachmentFileInfo,
-    getAttachmentSize,
     isAudioAttachment,
     isImageAttachment,
     isVideoAttachment,
-    readAttachmentBytes,
 } from './infra/attachments'

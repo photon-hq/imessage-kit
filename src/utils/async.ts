@@ -73,7 +73,11 @@ export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {})
             return await fn()
         } catch (err) {
             lastError = err instanceof Error ? err : new Error(String(err))
-            if (signal?.aborted) break
+
+            // If the caller aborted, surface the abort reason — not the
+            // fn's internal error — so callers can distinguish cancellation
+            // from a genuine fn failure.
+            if (signal?.aborted) throw signal.reason ?? new Error('Aborted')
 
             if (attempt < attempts - 1) {
                 const exponential = backoff ? baseDelay * 2 ** attempt : baseDelay
@@ -99,11 +103,19 @@ export class Semaphore {
         if (limit <= 0) throw new Error('Concurrency limit must be greater than 0')
     }
 
-    /** Acquire a slot. Returns a release function. */
+    /**
+     * Acquire a slot. Returns a release function.
+     *
+     * Slot-transfer semantics guarantee strict FIFO fairness:
+     * a waiter that is woken up has had the slot handed to it directly,
+     * so there is no re-check race where a late-arriving caller could
+     * jump ahead. The release function either transfers the slot to the
+     * next waiter (running unchanged) or decrements the counter.
+     */
     async acquire(signal?: AbortSignal): Promise<() => void> {
         if (signal?.aborted) throw signal.reason ?? new Error('Aborted')
 
-        while (this.running >= this.limit) {
+        if (this.running >= this.limit) {
             await new Promise<void>((resolve, reject) => {
                 const onAbort = () => {
                     const idx = this.waiting.indexOf(wrappedResolve)
@@ -119,16 +131,21 @@ export class Semaphore {
                 signal?.addEventListener('abort', onAbort, { once: true })
                 this.waiting.push(wrappedResolve)
             })
+            // Woken == slot was handed to us by a releaser; do not ++running.
+        } else {
+            this.running++
         }
-
-        this.running++
 
         let released = false
         return () => {
             if (released) return
             released = true
-            this.running--
-            this.waiting.shift()?.()
+            const next = this.waiting.shift()
+            if (next) {
+                next() // Transfer slot to next waiter; running stays the same.
+            } else {
+                this.running--
+            }
         }
     }
 

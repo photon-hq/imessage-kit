@@ -12,7 +12,7 @@
 // -----------------------------------------------
 
 /** Transport protocol used by a conversation or message. */
-export type Service = 'iMessage' | 'SMS' | 'RCS' | 'unknown'
+export type Service = 'iMessage' | 'SMS' | 'RCS'
 
 // -----------------------------------------------
 // Resolution
@@ -24,9 +24,12 @@ const SERVICE_MAP: Readonly<Record<string, Service>> = {
     rcs: 'RCS',
 }
 
-/** Resolve a raw service string to a typed Service value. Case-insensitive exact match. */
-export function resolveService(raw: string | null): Service {
-    if (raw == null) return 'unknown'
+/**
+ * Resolve a raw service string to a typed Service value. Case-insensitive
+ * exact match. Returns `null` when the raw column is null or unrecognized.
+ */
+export function resolveService(raw: string | null): Service | null {
+    if (raw == null) return null
 
-    return SERVICE_MAP[raw.toLowerCase()] ?? 'unknown'
+    return SERVICE_MAP[raw.toLowerCase()] ?? null
 }

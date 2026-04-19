@@ -6,21 +6,12 @@
  */
 
 import { Database } from 'bun:sqlite'
-import { mkdirSync, rmSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHAT_STYLE_DM, CHAT_STYLE_GROUP } from '../src/domain/chat'
 
 type DatabaseAdapter = Database
-
-/**
- * Create a temporary directory for tests
- */
-export function createTempDir(): string {
-    const tempPath = join(tmpdir(), `imessage-sdk-test-${Date.now()}`)
-    mkdirSync(tempPath, { recursive: true })
-    return tempPath
-}
 
 /**
  * Clean up temporary directory
@@ -368,24 +359,6 @@ export function insertTestMessage(
     }
 
     return messageId
-}
-
-/**
- * Mock AppleScript executor for testing
- */
-export function mockAppleScript() {
-    const calls: Array<{ script: string; args: string[] }> = []
-
-    return {
-        calls,
-        execute: async (script: string, ...args: string[]) => {
-            calls.push({ script, args })
-            return ''
-        },
-        reset: () => {
-            calls.length = 0
-        },
-    }
 }
 
 /**

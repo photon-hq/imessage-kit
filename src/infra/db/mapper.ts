@@ -126,38 +126,53 @@ function optionalParticipant(value: unknown, fieldName: string): string | null {
 // -----------------------------------------------
 
 function resolveMessageChatId(row: Record<string, unknown>): ChatId | null {
-    return (
-        resolvePrimaryChatId(row.chat_guid, row.chat_id, row.chat_service) ??
-        resolveCloudKitChatId(row.ck_chat_id) ??
-        resolveParticipantChatId(row.participant, row.service, 'message.participant') ??
-        resolveParticipantChatId(row.destination_caller_id, row.service, 'message.destination_caller_id')
-    )
+    // Trust the authoritative identifiers first: `chat.guid` /
+    // `chat.chat_identifier` (via the LEFT JOIN chat) or the CloudKit mirror.
+    //
+    // Deliberate asymmetry for the fallbacks:
+    //
+    //   • We fall back to `message.destination_caller_id` ONLY for
+    //     out-bound messages (is_from_me = 1). For those, it is the
+    //     recipient the user addressed, so it correctly identifies a DM
+    //     when the chat row has not yet been joined (orphan out-bound
+    //     messages during a race). For INBOUND messages the same column
+    //     holds *my own* caller id — using it would mint a DM chatId
+    //     pointing at myself, mis-routing an incoming group message as
+    //     `chatKind='dm'`.
+    //
+    //   • We do NOT fall back to `message.participant` (handle.id). For
+    //     in-bound group messages that field is the SENDER's personal
+    //     handle, not the chat. Constructing a DM chatId from it makes
+    //     `message.chatId` point at an individual, so any reply keyed on
+    //     that chatId (e.g. agents echoing back into "the same conversation")
+    //     lands in a 1:1 thread instead of the original group.
+    const primary = resolvePrimaryChatId(row.chat_guid, row.chat_id) ?? resolveCloudKitChatId(row.ck_chat_id)
+    if (primary != null) return primary
+
+    // Only trust destination_caller_id on out-bound messages.
+    if (!flag(row.is_from_me, 'message.is_from_me')) return null
+
+    return resolveRecipientChatId(row.destination_caller_id, row.service, 'message.destination_caller_id')
 }
 
-function resolvePrimaryChatId(guid: unknown, identifier: unknown, service: unknown): ChatId | null {
-    const guidValue = optionalNonEmptyString(guid, 'message.chat_guid')
-    const identifierValue = optionalNonEmptyString(identifier, 'message.chat_id')
-    const serviceValue = optionalNonEmptyString(service, 'message.chat_service')
+function resolveRecipientChatId(recipient: unknown, service: unknown, fieldName: string): ChatId | null {
+    const value = optionalParticipant(recipient, fieldName)
+    if (value == null) return null
 
-    if (guidValue == null && identifierValue == null && serviceValue == null) {
-        return null
-    }
+    const servicePrefix = parseChatServicePrefix(optionalNonEmptyString(service, 'message.service'))
+    return servicePrefix ? ChatId.fromDMRecipient(value, servicePrefix) : ChatId.fromUserInput(value)
+}
 
-    const raw = guidValue ?? identifierValue ?? ''
-    return raw === '' ? null : ChatId.fromUserInput(raw)
+function resolvePrimaryChatId(guid: unknown, identifier: unknown): ChatId | null {
+    const raw =
+        optionalNonEmptyString(guid, 'message.chat_guid') ?? optionalNonEmptyString(identifier, 'message.chat_id')
+
+    return raw == null ? null : ChatId.fromUserInput(raw)
 }
 
 function resolveCloudKitChatId(value: unknown): ChatId | null {
     const raw = optionalParticipant(value, 'message.ck_chat_id')
     return raw == null ? null : ChatId.fromUserInput(raw)
-}
-
-function resolveParticipantChatId(participant: unknown, service: unknown, fieldName: string): ChatId | null {
-    const recipient = optionalParticipant(participant, fieldName)
-    if (recipient == null) return null
-
-    const servicePrefix = parseChatServicePrefix(optionalNonEmptyString(service, 'message.service'))
-    return servicePrefix ? ChatId.fromDMRecipient(recipient, servicePrefix) : ChatId.fromUserInput(recipient)
 }
 
 // -----------------------------------------------
@@ -238,13 +253,76 @@ export function rowToChat(row: Record<string, unknown>): Chat {
 // Message mapping
 // -----------------------------------------------
 
+/**
+ * Resolve chatKind with `chat.style` as authoritative source.
+ *
+ * When `chat` did not join (WAL race before `chat_message_join` is visible),
+ * fall back to the ChatId's own group detection, and finally to 'unknown'.
+ */
+function resolveMessageChatKind(chatStyle: number | null, resolved: ChatId | null): ChatKind {
+    if (chatStyle != null) return resolveChatKind(chatStyle)
+    if (resolved == null) return 'unknown'
+    return resolved.isGroup ? 'group' : 'dm'
+}
+
+/**
+ * macOS 26 (Tahoe) stopped populating `message.date_retracted` on unsend;
+ * instead it sets `is_empty = 1` and writes a 5-entry `bplist00` into
+ * `message_summary_info` containing keys `Samc` `Sust` `Rep` `Sotr` `Rrp`
+ * (recoverable-record-part). Earlier versions used 2-entry dicts and the
+ * date column. We detect Tahoe retracts via the `Rrp` marker.
+ */
+function detectTahoeRetract(row: Record<string, unknown>): boolean {
+    const isEmpty = optionalNumber(row.is_empty, 'message.is_empty') === 1
+    if (!isEmpty) return false
+    const summary = row.message_summary_info
+    if (!summary) return false
+    let buf: Buffer | null = null
+    if (Buffer.isBuffer(summary)) buf = summary
+    else if (summary instanceof Uint8Array) buf = Buffer.from(summary)
+    if (!buf || buf.length < 6) return false
+    // ASCII 'Rrp' = 0x52 0x72 0x70 — present only when bplist dict has the
+    // retract slot. Avoids a full bplist parse; false positives would require
+    // a normal message to contain this exact 3-byte sequence in summary_info.
+    return buf.includes(Buffer.from([0x52, 0x72, 0x70]))
+}
+
+/**
+ * Patch chat-related fields (`chatId`, `chatKind`) on a message using a
+ * backfill row from `buildChatBackfillQuery`. Used by the reader when the
+ * original `buildMessageQuery` saw `chat_message_join` before it was
+ * written (WAL race). Returns the original message if the backfill row
+ * carries no new information.
+ *
+ * Backfill rows only carry `chat_guid` / `chat_id` / `chat_style` — the
+ * other fallbacks (destination_caller_id, ck_chat_id) were already
+ * attempted in the original mapping, so we call the primary-chat-id
+ * resolver directly.
+ */
+export function patchMessageChatInfo(message: Message, chatRow: Record<string, unknown>): Message {
+    const resolved = resolvePrimaryChatId(chatRow.chat_guid, chatRow.chat_id)
+    const chatId = resolved?.toString() ?? message.chatId
+    const chatKind = resolveMessageChatKind(optionalNumber(chatRow.chat_style, 'chat.style'), resolved)
+
+    if (chatId === message.chatId && chatKind === message.chatKind) return message
+    return { ...message, chatId, chatKind }
+}
+
 /** Convert a raw message row to a Message domain model. */
 export function rowToMessage(row: Record<string, unknown>, attachments: readonly Attachment[]): Message {
     const resolved = resolveMessageChatId(row)
-    const chatId = resolved?.toString() ?? ''
-    const chatKind: ChatKind = resolved == null ? 'unknown' : resolved.isGroup ? 'group' : 'dm'
+    const chatId = resolved?.toString() ?? null
+    const chatKind = resolveMessageChatKind(optionalNumber(row.chat_style, 'message.chat_style'), resolved)
     const errorCode = optionalNumber(row.error, 'message.error') ?? 0
     const reaction = mapReaction(row)
+    // Tahoe retract fallback: use date_edited (retract happens after edits)
+    // or the original send date as an approximate retract time.
+    const directRetract = optionalDate(row.date_retracted, 'message.date_retracted')
+    const retractedAt =
+        directRetract ??
+        (detectTahoeRetract(row)
+            ? (optionalDate(row.date_edited, 'message.date_edited') ?? optionalDate(row.date, 'message.date'))
+            : null)
 
     return {
         rowId: requireNumber(row.id, 'message.id'),
@@ -254,13 +332,10 @@ export function rowToMessage(row: Record<string, unknown>, attachments: readonly
         participant: optionalParticipant(row.participant, 'message.participant'),
         service: resolveService(optionalNonEmptyString(row.service, 'message.service')),
         text: resolveMessageText(row),
-        kind:
-            reaction != null
-                ? 'reaction'
-                : resolveMessageKind(
-                      optionalNumber(row.item_type, 'message.item_type'),
-                      optionalNumber(row.group_action_type, 'message.group_action_type')
-                  ),
+        kind: resolveMessageKind(
+            optionalNumber(row.item_type, 'message.item_type'),
+            optionalNumber(row.group_action_type, 'message.group_action_type')
+        ),
         isFromMe: flag(row.is_from_me, 'message.is_from_me'),
         isRead: flag(row.is_read, 'message.is_read'),
         isSent: flag(row.is_sent, 'message.is_sent'),
@@ -281,13 +356,13 @@ export function rowToMessage(row: Record<string, unknown>, attachments: readonly
         wasDeliveredQuietly: flag(row.was_delivered_quietly, 'message.was_delivered_quietly'),
         isEmergencySos: flag(row.is_sos, 'message.is_sos'),
         isCriticalAlert: flag(row.is_critical, 'message.is_critical'),
-        isOffGridMessage: flag(row.sent_or_received_off_grid, 'message.sent_or_received_off_grid'),
+        isOffGrid: flag(row.sent_or_received_off_grid, 'message.sent_or_received_off_grid'),
         createdAt: requireDate(row.date, 'message.date'),
         deliveredAt: optionalDate(row.date_delivered, 'message.date_delivered'),
         readAt: optionalDate(row.date_read, 'message.date_read'),
         playedAt: optionalDate(row.date_played, 'message.date_played'),
         editedAt: optionalDate(row.date_edited, 'message.date_edited'),
-        retractedAt: optionalDate(row.date_retracted, 'message.date_retracted'),
+        retractedAt,
         recoveredAt: optionalDate(row.date_recovered, 'message.date_recovered'),
         replyToMessageId: optionalNonEmptyString(row.reply_to_guid, 'message.reply_to_guid'),
         threadRootMessageId: optionalNonEmptyString(row.thread_originator_guid, 'message.thread_originator_guid'),
@@ -302,6 +377,7 @@ export function rowToMessage(row: Record<string, unknown>, attachments: readonly
         scheduleKind: resolveScheduleKind(optionalNumber(row.schedule_type, 'message.schedule_type')),
         scheduleStatus: resolveScheduleStatus(optionalNumber(row.schedule_state, 'message.schedule_state')),
         segmentCount: optionalNumber(row.part_count, 'message.part_count') ?? 0,
+        hasAttachments: flag(row.cache_has_attachments, 'message.cache_has_attachments'),
         reaction,
         attachments,
     }
@@ -350,7 +426,7 @@ export function rowToAttachment(row: Record<string, unknown>): Attachment {
         uti: optionalNonEmptyString(row.uti, 'attachment.uti'),
         sizeBytes: optionalNumber(row.total_bytes, 'attachment.total_bytes') ?? 0,
         transferStatus: resolveTransferStatus(optionalNumber(row.transfer_state, 'attachment.transfer_state')),
-        isOutgoing: flag(row.is_outgoing, 'attachment.is_outgoing'),
+        isFromMe: flag(row.is_outgoing, 'attachment.is_outgoing'),
         isSticker: flag(row.is_sticker, 'attachment.is_sticker'),
         isSensitiveContent: flag(row.is_commsafety_sensitive, 'attachment.is_commsafety_sensitive'),
         altText: optionalNonEmptyString(row.emoji_image_short_description, 'attachment.emoji_image_short_description'),

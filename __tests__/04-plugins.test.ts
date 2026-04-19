@@ -5,8 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'bun:test'
-import { loggerPlugin } from '../src/infra/plugin/logger'
-import { definePlugin, type Plugin, PluginManager } from '../src/infra/plugin/manager'
+import { definePlugin, type Plugin, PluginManager } from '../src/infra/plugin'
 import { createSpy } from './setup'
 
 describe('PluginManager', () => {
@@ -236,10 +235,176 @@ describe('PluginManager', () => {
             manager.use({ name: 'plugin1' })
             manager.use({ name: 'plugin2' })
 
-            const errors = await manager.callHook('onNewMessage', { message: {} as any })
+            const errors = await manager.callHook('onIncomingMessage', { message: {} as any })
 
             expect(errors).toEqual([])
         })
+    })
+
+    describe('callInterruptingHook', () => {
+        it('should resolve silently when no plugin throws', async () => {
+            manager.use({
+                name: 'observer',
+                onBeforeSend: () => {},
+            })
+
+            await expect(
+                manager.callInterruptingHook('onBeforeSend', 'SEND', { request: { to: '+1234567890' } })
+            ).resolves.toBeUndefined()
+        })
+
+        it('should rethrow the first plugin throw as IMessageError with the given code', async () => {
+            manager.use({
+                name: 'auth-gate',
+                onBeforeSend: () => {
+                    throw new Error('Not authorised')
+                },
+            })
+
+            try {
+                await manager.callInterruptingHook('onBeforeSend', 'SEND', { request: { to: '+1234567890' } })
+                throw new Error('Expected throw')
+            } catch (err) {
+                const { IMessageError } = await import('../src/domain/errors')
+                expect(err).toBeInstanceOf(IMessageError)
+                expect((err as InstanceType<typeof IMessageError>).code).toBe('SEND')
+                expect((err as Error).message).toContain('auth-gate')
+                expect((err as Error).message).toContain('Not authorised')
+                expect((err as Error).cause).toBeInstanceOf(Error)
+            }
+        })
+
+        it('should skip remaining plugins after the first throw (fail-fast)', async () => {
+            const laterSpy = createSpy<() => void>()
+
+            manager.use({
+                name: 'gate',
+                onBeforeSend: () => {
+                    throw new Error('Reject')
+                },
+            })
+            manager.use({
+                name: 'would-run',
+                onBeforeSend: laterSpy.fn,
+            })
+
+            await expect(
+                manager.callInterruptingHook('onBeforeSend', 'SEND', { request: { to: '+1234567890' } })
+            ).rejects.toThrow(/gate.*Reject/)
+
+            expect(laterSpy.callCount()).toBe(0)
+        })
+
+        it('should NOT route the rejection through onError', async () => {
+            const onErrorSpy = createSpy<() => void>()
+
+            manager.use({
+                name: 'gate',
+                onBeforeSend: () => {
+                    throw new Error('Reject')
+                },
+            })
+            manager.use({
+                name: 'error-listener',
+                onError: onErrorSpy.fn,
+            })
+
+            await manager
+                .callInterruptingHook('onBeforeSend', 'SEND', { request: { to: '+1234567890' } })
+                .catch(() => {})
+
+            expect(onErrorSpy.callCount()).toBe(0)
+        })
+
+        it('should honour pre / normal / post ordering', async () => {
+            const events: string[] = []
+
+            manager.use({
+                name: 'normal',
+                onBeforeSend: () => {
+                    events.push('normal')
+                },
+            })
+            manager.use({
+                name: 'post',
+                order: 'post',
+                onBeforeSend: () => {
+                    events.push('post')
+                },
+            })
+            manager.use({
+                name: 'pre',
+                order: 'pre',
+                onBeforeSend: () => {
+                    events.push('pre')
+                },
+            })
+
+            await manager.callInterruptingHook('onBeforeSend', 'SEND', { request: { to: '+1234567890' } })
+
+            expect(events).toEqual(['pre', 'normal', 'post'])
+        })
+    })
+})
+
+describe('PluginManager — teardown races', () => {
+    it('rejects use() once destroy() has started so late plugins cannot attach to a closing manager', async () => {
+        const manager = new PluginManager()
+        manager.use({
+            name: 'slow',
+            onDestroy: async () => {
+                await new Promise((r) => setTimeout(r, 20))
+            },
+        })
+
+        const destroyInFlight = manager.destroy()
+        // destroying = true is set synchronously at the start of destroy().
+        expect(() => manager.use({ name: 'latecomer' })).toThrow(/destroying/)
+        await destroyInFlight
+    })
+
+    it('shares a single in-flight promise across concurrent destroy() callers', async () => {
+        const manager = new PluginManager()
+        let calls = 0
+        manager.use({
+            name: 'counter',
+            onDestroy: async () => {
+                calls++
+                await new Promise((r) => setTimeout(r, 10))
+            },
+        })
+        await manager.init()
+
+        // Fire both without awaiting the first — the second must piggy-back on
+        // the same promise instead of triggering a second destroy pass.
+        const first = manager.destroy()
+        const second = manager.destroy()
+        await Promise.all([first, second])
+
+        expect(calls).toBe(1)
+    })
+
+    it('suppresses errors thrown from onError itself so error reporting cannot recurse', async () => {
+        const manager = new PluginManager()
+        // Plugin A throws from a regular hook → error gets routed to onError hooks.
+        manager.use({
+            name: 'throws-on-before-send',
+            onBeforeSend: () => {
+                throw new Error('root failure')
+            },
+        })
+        // Plugin B's onError itself throws. Recursive routing would loop forever;
+        // reportHookError is expected to log+swallow the second throw.
+        manager.use({
+            name: 'broken-error-handler',
+            onError: () => {
+                throw new Error('error handler also broken')
+            },
+        })
+
+        // If recursion protection is missing, this never settles. Awaiting it
+        // successfully is the assertion.
+        await manager.callHook('onBeforeSend', { request: { to: '+1234567890' } })
     })
 })
 
@@ -256,47 +421,5 @@ describe('definePlugin', () => {
         expect(plugin.version).toBe('1.0.0')
         expect(plugin.description).toBe('Test plugin')
         expect(typeof plugin.onInit).toBe('function')
-    })
-})
-
-describe('loggerPlugin', () => {
-    it('should create logger plugin with defaults', () => {
-        const plugin = loggerPlugin()
-
-        expect(plugin.name).toBe('logger')
-        expect(plugin.version).toBe('1.0.0')
-        expect(typeof plugin.onInit).toBe('function')
-        expect(typeof plugin.onBeforeSend).toBe('function')
-        expect(typeof plugin.onAfterSend).toBe('function')
-        expect(typeof plugin.onNewMessage).toBe('function')
-        expect(typeof plugin.onError).toBe('function')
-        expect(typeof plugin.onDestroy).toBe('function')
-    })
-
-    it('should accept custom options', () => {
-        const plugin = loggerPlugin({
-            level: 'debug',
-            colors: false,
-            timestamps: true,
-            logSend: false,
-            logNewMessage: true,
-        })
-
-        expect(plugin.name).toBe('logger')
-    })
-
-    it('should not throw errors during logging', () => {
-        const plugin = loggerPlugin({ level: 'info' })
-
-        expect(() => plugin.onInit?.()).not.toThrow()
-        expect(() => plugin.onBeforeSend?.({ request: { to: '+1234567890', text: 'Hi' } })).not.toThrow()
-        expect(() =>
-            plugin.onAfterSend?.({
-                request: { to: '+1234567890', text: 'Hi' },
-                result: { chatId: '+1234567890', to: '+1234567890', service: 'iMessage', sentAt: new Date() },
-            })
-        ).not.toThrow()
-        expect(() => plugin.onError?.({ error: new Error('Test'), context: 'context' })).not.toThrow()
-        expect(() => plugin.onDestroy?.()).not.toThrow()
     })
 })

@@ -133,174 +133,10 @@ describe('IMessageSDK', () => {
 
             sdk = createSdk()
 
-            const messages = await sdk.getMessages({ unreadOnly: true })
+            const messages = await sdk.getMessages({ isRead: false })
 
             expect(messages.length).toBe(1)
             expect(messages[0]?.text).toBe('Unread')
-        })
-    })
-
-    describe('message', () => {
-        it('should create message chain', async () => {
-            sdk = createSdk()
-
-            const mockMessage: any = {
-                rowId: 1,
-                text: 'Hello',
-                sender: '+1234567890',
-                isFromMe: false,
-            }
-
-            const chain = sdk.message(mockMessage)
-
-            expect(chain).toBeDefined()
-            expect(typeof chain.ifFromOthers).toBe('function')
-            expect(typeof chain.matchText).toBe('function')
-            expect(typeof chain.replyText).toBe('function')
-        })
-
-        it('should route chain replies through the unified SDK send hooks', async () => {
-            const beforeSendSpy = createSpy<() => void>()
-            const afterSendSpy = createSpy<() => void>()
-
-            sdk = createSdk({
-                plugins: [
-                    {
-                        name: 'chain-send-hooks',
-                        onBeforeSend: beforeSendSpy.fn,
-                        onAfterSend: afterSendSpy.fn,
-                    },
-                ],
-            })
-
-            await withMockedSend(
-                async () => ({ status: 'sent', sentAt: new Date() }),
-                async () => {
-                    await sdk
-                        .message({
-                            rowId: 1,
-                            id: 'msg-1',
-                            chatId: '+1234567890',
-                            chatKind: 'dm',
-                            participant: '+1234567890',
-                            service: 'iMessage',
-                            text: 'ping',
-                            kind: 'text',
-                            isFromMe: false,
-                            isRead: false,
-                            isSent: false,
-                            isDelivered: false,
-                            isDowngraded: false,
-                            didNotifyRecipient: false,
-                            isAutoReply: false,
-                            isSystem: false,
-                            isForwarded: false,
-                            isAudioMessage: false,
-                            isPlayed: false,
-                            isExpirable: false,
-                            hasError: false,
-                            errorCode: 0,
-                            isSpam: false,
-                            isContactKeyVerified: false,
-                            hasUnseenMention: false,
-                            wasDeliveredQuietly: false,
-                            isEmergencySos: false,
-                            isCriticalAlert: false,
-                            isOffGridMessage: false,
-                            createdAt: new Date(),
-                            deliveredAt: null,
-                            readAt: null,
-                            playedAt: null,
-                            editedAt: null,
-                            retractedAt: null,
-                            recoveredAt: null,
-                            replyToMessageId: null,
-                            threadRootMessageId: null,
-                            affectedParticipant: null,
-                            newGroupName: null,
-                            sendEffect: null,
-                            appBundleId: null,
-                            isInvisibleInkRevealed: false,
-                            expireStatus: 'active',
-                            shareActivity: 'none',
-                            shareDirection: 'none',
-                            scheduleKind: 'none',
-                            scheduleStatus: 'none',
-                            segmentCount: 1,
-                            reaction: null,
-                            attachments: [],
-                        })
-                        .replyText('pong')
-                        .execute()
-                }
-            )
-
-            expect(beforeSendSpy.callCount()).toBe(1)
-            expect(afterSendSpy.callCount()).toBe(1)
-        })
-
-        it('should reject chain execution after the SDK is closed', async () => {
-            sdk = createSdk()
-
-            const chain = sdk.message({
-                rowId: 1,
-                id: 'msg-1',
-                chatId: '+1234567890',
-                chatKind: 'dm',
-                participant: '+1234567890',
-                service: 'iMessage',
-                text: 'ping',
-                kind: 'text',
-                isFromMe: false,
-                isRead: false,
-                isSent: false,
-                isDelivered: false,
-                isDowngraded: false,
-                didNotifyRecipient: false,
-                isAutoReply: false,
-                isSystem: false,
-                isForwarded: false,
-                isAudioMessage: false,
-                isPlayed: false,
-                isExpirable: false,
-                hasError: false,
-                errorCode: 0,
-                isSpam: false,
-                isContactKeyVerified: false,
-                hasUnseenMention: false,
-                wasDeliveredQuietly: false,
-                isEmergencySos: false,
-                isCriticalAlert: false,
-                isOffGridMessage: false,
-                createdAt: new Date(),
-                deliveredAt: null,
-                readAt: null,
-                playedAt: null,
-                editedAt: null,
-                retractedAt: null,
-                recoveredAt: null,
-                replyToMessageId: null,
-                threadRootMessageId: null,
-                affectedParticipant: null,
-                newGroupName: null,
-                sendEffect: null,
-                appBundleId: null,
-                isInvisibleInkRevealed: false,
-                expireStatus: 'active',
-                shareActivity: 'none',
-                shareDirection: 'none',
-                scheduleKind: 'none',
-                scheduleStatus: 'none',
-                segmentCount: 1,
-                reaction: null,
-                attachments: [],
-            })
-
-            await sdk.close()
-
-            const result = await chain.replyText('pong').execute()
-            expect(result.errors.length).toBe(1)
-            expect(result.errors[0]?.message).toBe('SDK is destroyed')
         })
     })
 
@@ -321,7 +157,28 @@ describe('IMessageSDK', () => {
 
             expect(initSpy.callCount()).toBeGreaterThan(0)
 
-            sdk.stopWatching()
+            await sdk.stopWatching()
+        })
+
+        it('stopWatching is a no-op when the watcher was never started', async () => {
+            sdk = createSdk()
+            // Must resolve without error even though start() was never called.
+            await expect(sdk.stopWatching()).resolves.toBeUndefined()
+        })
+
+        it('should reject a concurrent startWatching call instead of orphaning the first watcher', async () => {
+            sdk = createSdk()
+
+            // Two concurrent calls in the same tick — the slot is claimed
+            // synchronously, so the second call must throw rather than
+            // silently building a parallel watcher that would leak.
+            const first = sdk.startWatching()
+            const second = sdk.startWatching()
+
+            await expect(second).rejects.toThrow('Watcher is already running')
+            await first
+
+            await sdk.stopWatching()
         })
     })
 
@@ -355,6 +212,56 @@ describe('IMessageSDK', () => {
 
             await sdk.close()
             await sdk.close() // Should not throw
+        })
+
+        it('should make concurrent close calls await the same in-flight shutdown', async () => {
+            let destroyEntered!: () => void
+            const destroyEnteredPromise = new Promise<void>((resolve) => {
+                destroyEntered = resolve
+            })
+            let releaseDestroy!: () => void
+            const destroyGate = new Promise<void>((resolve) => {
+                releaseDestroy = resolve
+            })
+            let destroyCalls = 0
+            let secondResolved = false
+
+            sdk = createSdk({
+                plugins: [
+                    {
+                        name: 'slow-destroy',
+                        onDestroy: async () => {
+                            destroyCalls++
+                            destroyEntered()
+                            await destroyGate
+                        },
+                    },
+                ],
+            })
+
+            await sdk.getMessages() // Force plugin init so onDestroy runs
+
+            const first = sdk.close()
+            const second = sdk.close().then(() => {
+                secondResolved = true
+            })
+
+            // Wait until the in-flight onDestroy has actually started.
+            await destroyEnteredPromise
+
+            // Exactly one invocation — the second close must not skip ahead
+            // on a synchronous `destroyed` flag while the first is still
+            // mid-teardown.
+            expect(destroyCalls).toBe(1)
+            // And the second close must still be pending — it's sharing
+            // the first call's promise, not resolving independently.
+            expect(secondResolved).toBe(false)
+
+            releaseDestroy()
+            await Promise.all([first, second])
+
+            expect(destroyCalls).toBe(1)
+            expect(secondResolved).toBe(true)
         })
 
         it('should throw error when using SDK after close', async () => {
@@ -391,80 +298,6 @@ describe('IMessageSDK', () => {
     })
 
     describe('File Sending API', () => {
-        it('should stop and mark later items as skipped when continueOnError is false', async () => {
-            await withMockedSend(
-                async (options: { to: string }) => {
-                    if (options.to === '+1000000002') {
-                        throw new Error('Send failed')
-                    }
-
-                    return { status: 'sent' as const, sentAt: new Date() }
-                },
-                async () => {
-                    sdk = createSdk()
-
-                    const result = await sdk.sendBatch(
-                        [
-                            { to: '+1000000001', text: 'First' },
-                            { to: '+1000000002', text: 'Second' },
-                            { to: '+1000000003', text: 'Third' },
-                        ],
-                        {
-                            concurrency: 1,
-                            continueOnError: false,
-                        }
-                    )
-
-                    expect(result.sent + result.failed + result.skipped).toBe(3)
-                    expect(result.sent).toBe(1)
-                    expect(result.failed).toBe(1)
-                    expect(result.skipped).toBe(1)
-                    expect(result.results[0]?.status).toBe('sent')
-                    expect(result.results[1]?.status).toBe('failed')
-                    expect(result.results[2]?.status).toBe('skipped')
-                }
-            )
-        })
-
-        it('should respect the configured batch concurrency limit', async () => {
-            let inFlight = 0
-            let maxInFlight = 0
-
-            await withMockedSend(
-                async () => {
-                    inFlight += 1
-                    maxInFlight = Math.max(maxInFlight, inFlight)
-
-                    try {
-                        await new Promise((resolve) => setTimeout(resolve, 25))
-                        return { status: 'sent' as const, sentAt: new Date() }
-                    } finally {
-                        inFlight -= 1
-                    }
-                },
-                async () => {
-                    sdk = createSdk()
-
-                    const result = await sdk.sendBatch(
-                        [
-                            { to: '+1000000001', text: 'One' },
-                            { to: '+1000000002', text: 'Two' },
-                            { to: '+1000000003', text: 'Three' },
-                            { to: '+1000000004', text: 'Four' },
-                        ],
-                        {
-                            concurrency: 2,
-                        }
-                    )
-
-                    expect(result.sent).toBe(4)
-                    expect(result.failed).toBe(0)
-                    expect(result.skipped).toBe(0)
-                    expect(maxInFlight).toBe(2)
-                }
-            )
-        })
-
         it('should accept files parameter in send()', async () => {
             const sendSpy = createSpy<(options: any) => Promise<{ status: 'sent'; sentAt: Date }>>(() =>
                 Promise.resolve({ status: 'sent', sentAt: new Date() })
@@ -473,7 +306,8 @@ describe('IMessageSDK', () => {
             await withMockedSend(sendSpy.fn, async () => {
                 sdk = createSdk()
 
-                await sdk.send('+1234567890', {
+                await sdk.send({
+                    to: '+1234567890',
                     attachments: ['/path/to/file.pdf', '/path/to/contact.vcf'],
                 })
             })
@@ -491,7 +325,8 @@ describe('IMessageSDK', () => {
             await withMockedSend(sendSpy.fn, async () => {
                 sdk = createSdk()
 
-                await sdk.send('+1234567890', {
+                await sdk.send({
+                    to: '+1234567890',
                     text: 'Check these',
                     attachments: ['/image.jpg', '/document.pdf'],
                 })
@@ -501,39 +336,6 @@ describe('IMessageSDK', () => {
             const callArgs = sendSpy.getCalls()[0]
             expect(callArgs.attachments).toEqual(['/image.jpg', '/document.pdf'])
             expect(callArgs.text).toBe('Check these')
-        })
-
-        it('should support sendFile() convenience method', async () => {
-            const sendSpy = createSpy<(options: any) => Promise<{ status: 'sent'; sentAt: Date }>>(() =>
-                Promise.resolve({ status: 'sent', sentAt: new Date() })
-            )
-
-            await withMockedSend(sendSpy.fn, async () => {
-                sdk = createSdk()
-
-                await sdk.sendFile('+1234567890', '/path/to/document.pdf', 'Here is the file')
-            })
-
-            expect(sendSpy.callCount()).toBe(1)
-            const callArgs = sendSpy.getCalls()[0]
-            expect(callArgs.attachments).toEqual(['/path/to/document.pdf'])
-            expect(callArgs.text).toBe('Here is the file')
-        })
-
-        it('should support sendFiles() convenience method', async () => {
-            const sendSpy = createSpy<(options: any) => Promise<{ status: 'sent'; sentAt: Date }>>(() =>
-                Promise.resolve({ status: 'sent', sentAt: new Date() })
-            )
-
-            await withMockedSend(sendSpy.fn, async () => {
-                sdk = createSdk()
-
-                await sdk.sendFiles('+1234567890', ['/file1.pdf', '/file2.csv'])
-            })
-
-            expect(sendSpy.callCount()).toBe(1)
-            const callArgs = sendSpy.getCalls()[0]
-            expect(callArgs.attachments).toEqual(['/file1.pdf', '/file2.csv'])
         })
     })
 })

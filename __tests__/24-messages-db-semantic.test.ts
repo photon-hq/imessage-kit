@@ -154,4 +154,137 @@ describe('Messages DB Semantic Mapping', () => {
     it('throws when chat summary aggregates are malformed', () => {
         expect(() => rowToChat(createChatRow({ unread_count: 'bad-count' }))).toThrow(/chat.unread_count/)
     })
+
+    describe('retract detection', () => {
+        // 'Rrp' marker = bytes 0x52 0x72 0x70. Surround with enough bytes so
+        // `buf.length >= 6` guard passes.
+        const rrpBlob = Buffer.from([0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x52, 0x72, 0x70, 0x00])
+        const noRrpBlob = Buffer.from([0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x00, 0x00, 0x00, 0x00])
+
+        it('uses direct date_retracted when present (pre-Tahoe path)', () => {
+            const editedAtMs = Date.now() - 60_000
+            const retractedAtMs = Date.now() - 30_000
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 0,
+                    date_edited: toMacTimestamp(editedAtMs),
+                    date_retracted: toMacTimestamp(retractedAtMs),
+                    message_summary_info: rrpBlob,
+                }),
+                []
+            )
+            // Direct column wins — falls on pre-Tahoe + Tahoe with populated column.
+            expect(m.retractedAt?.getTime()).toBe(retractedAtMs)
+            expect(m.editedAt?.getTime()).toBe(editedAtMs)
+        })
+
+        it('falls back to date_edited when Tahoe retract detected (is_empty=1 + Rrp)', () => {
+            const editedAtMs = Date.now() - 20_000
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    date_retracted: 0,
+                    date_edited: toMacTimestamp(editedAtMs),
+                    message_summary_info: rrpBlob,
+                }),
+                []
+            )
+            expect(m.retractedAt?.getTime()).toBe(editedAtMs)
+        })
+
+        it('falls back to date when Tahoe retract detected and date_edited is zero', () => {
+            const sendAtMs = Date.now() - 5_000
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    date_retracted: 0,
+                    date_edited: 0,
+                    date: toMacTimestamp(sendAtMs),
+                    message_summary_info: rrpBlob,
+                }),
+                []
+            )
+            expect(m.retractedAt?.getTime()).toBe(sendAtMs)
+        })
+
+        it('does NOT mark retract when is_empty=1 but Rrp marker is absent', () => {
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    date_retracted: 0,
+                    date_edited: 0,
+                    message_summary_info: noRrpBlob,
+                }),
+                []
+            )
+            expect(m.retractedAt).toBeNull()
+        })
+
+        it('does NOT mark retract when is_empty=0 even if Rrp is present', () => {
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 0,
+                    date_retracted: 0,
+                    date_edited: 0,
+                    message_summary_info: rrpBlob,
+                }),
+                []
+            )
+            expect(m.retractedAt).toBeNull()
+        })
+
+        it('skips Tahoe detection when summary_info is missing or too short', () => {
+            const missing = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    message_summary_info: null,
+                }),
+                []
+            )
+            expect(missing.retractedAt).toBeNull()
+
+            const tooShort = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    message_summary_info: Buffer.from([0x52, 0x72]),
+                }),
+                []
+            )
+            expect(tooShort.retractedAt).toBeNull()
+        })
+
+        it('accepts Uint8Array summary_info (not just Buffer)', () => {
+            const bytes = new Uint8Array(rrpBlob)
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 1,
+                    date_edited: toMacTimestamp(Date.now() - 1_000),
+                    message_summary_info: bytes,
+                }),
+                []
+            )
+            expect(m.retractedAt).not.toBeNull()
+        })
+    })
+
+    describe('edit timestamps', () => {
+        it('surfaces date_edited independently of retract status', () => {
+            const editedAtMs = Date.now() - 10_000
+            const m = rowToMessage(
+                createMessageRow({
+                    is_empty: 0,
+                    date_edited: toMacTimestamp(editedAtMs),
+                    date_retracted: 0,
+                }),
+                []
+            )
+            expect(m.editedAt?.getTime()).toBe(editedAtMs)
+            expect(m.retractedAt).toBeNull()
+        })
+
+        it('leaves editedAt null when date_edited is zero', () => {
+            const m = rowToMessage(createMessageRow({ date_edited: 0 }), [])
+            expect(m.editedAt).toBeNull()
+        })
+    })
 })

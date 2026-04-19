@@ -83,7 +83,7 @@ describe('MessagesDatabaseReader', () => {
         })
 
         it('should filter unread messages', async () => {
-            const messages = await database.getMessages({ unreadOnly: true })
+            const messages = await database.getMessages({ isRead: false })
 
             expect(messages.length).toBe(1)
             expect(messages[0]?.isRead).toBe(false)
@@ -225,71 +225,47 @@ describe('MessagesDatabaseReader', () => {
         })
     })
 
-    describe('getUnreadMessages', () => {
-        beforeEach(() => {
-            insertTestMessage(mockDb.db, {
-                text: 'Unread 1',
-                sender: '+1111111111',
-                isRead: false,
-            })
-            insertTestMessage(mockDb.db, {
-                text: 'Unread 2',
-                sender: '+1111111111',
-                isRead: false,
-            })
-            insertTestMessage(mockDb.db, {
-                text: 'Unread 3',
-                sender: '+2222222222',
-                isRead: false,
-            })
-            insertTestMessage(mockDb.db, {
-                text: 'Read',
-                sender: '+3333333333',
-                isRead: true,
-            })
+    describe('getMessagesSinceRowId', () => {
+        it('returns only rows with ROWID > sinceRowId, ordered ascending', async () => {
+            const id1 = insertTestMessage(mockDb.db, { text: 'a', sender: '+1' })
+            const id2 = insertTestMessage(mockDb.db, { text: 'b', sender: '+1' })
+            const id3 = insertTestMessage(mockDb.db, { text: 'c', sender: '+1' })
+
+            const since = await database.getMessagesSinceRowId(id1)
+            expect(since.map((m) => m.rowId)).toEqual([id2, id3])
         })
 
-        it('should return unread messages', async () => {
-            const messages = await database.getMessages({ unreadOnly: true })
+        it('returns empty when sinceRowId is already the max', async () => {
+            const maxId = insertTestMessage(mockDb.db, { text: 'x', sender: '+1' })
+            const since = await database.getMessagesSinceRowId(maxId)
+            expect(since).toHaveLength(0)
+        })
+    })
 
-            expect(messages.length).toBe(3)
-            expect(messages.every((m) => !m.isRead)).toBe(true)
+    describe('listChats', () => {
+        it('returns the chats present in the database', async () => {
+            // createMockDatabase seeds a handful of chats via insertTestMessage side effects.
+            insertTestMessage(mockDb.db, { text: 'seed', sender: '+1234567890' })
+            const chats = await database.listChats()
+            expect(Array.isArray(chats)).toBe(true)
+            // Each chat row must at minimum carry a chatId string.
+            for (const c of chats) {
+                expect(typeof c.chatId).toBe('string')
+            }
         })
 
-        it('should return empty array when no unread messages', async () => {
-            // Mark all as read
-            mockDb.db.prepare('UPDATE message SET is_read = 1').run()
-
-            const messages = await database.getMessages({ unreadOnly: true })
-
-            expect(messages.length).toBe(0)
+        it('respects the limit option', async () => {
+            insertTestMessage(mockDb.db, { text: 'one', sender: '+1111111111' })
+            insertTestMessage(mockDb.db, { text: 'two', sender: '+2222222222' })
+            const chats = await database.listChats({ limit: 1 })
+            expect(chats.length).toBeLessThanOrEqual(1)
         })
     })
 
     describe('Service Type Mapping', () => {
-        it('should map iMessage service', async () => {
-            insertTestMessage(mockDb.db, {
-                text: 'iMessage',
-                sender: '+1234567890',
-                service: 'iMessage',
-            })
-
-            const messages = await database.getMessages()
-            expect(messages[0]?.service).toBe('iMessage')
-        })
-
-        it('should map SMS service', async () => {
-            insertTestMessage(mockDb.db, {
-                text: 'SMS',
-                sender: '+1234567890',
-                service: 'SMS',
-            })
-
-            const messages = await database.getMessages()
-            expect(messages[0]?.service).toBe('SMS')
-        })
-
-        it('should map unknown service values to unknown', async () => {
+        // Narrow coverage the filter test doesn't give: the mapper must coerce unrecognised
+        // service strings to `null` so downstream `service: 'iMessage' | 'SMS' | null` holds.
+        it('maps unrecognized service values to null', async () => {
             insertTestMessage(mockDb.db, {
                 text: 'Unknown',
                 sender: '+1234567890',
@@ -297,7 +273,7 @@ describe('MessagesDatabaseReader', () => {
             })
 
             const messages = await database.getMessages()
-            expect(messages[0]?.service).toBe('unknown')
+            expect(messages[0]?.service).toBeNull()
         })
     })
 

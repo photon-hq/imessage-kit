@@ -3,7 +3,7 @@ import { IMessageSDK, IMessageError } from '../src'
 const sdk = new IMessageSDK()
 
 try {
-    await sdk.send('invalid-recipient', 'Test')
+    await sdk.send({ to: 'invalid-recipient', text: 'Test' })
 } catch (err: unknown) {
     if (err instanceof IMessageError) {
         console.error('SDK Error:', err.message)

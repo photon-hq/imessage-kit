@@ -1,38 +1,34 @@
 /**
- * Send request and result types.
- *
- * Data shapes for the send pipeline. Kept in types/ so that both
- * application/ (SendPort) and types/plugin.ts can import without
- * crossing layer boundaries.
+ * Send request type.
  */
 
-import type { Message } from '../domain/message'
-import type { Service } from '../domain/service'
+/** Arguments for `sdk.send()`. */
+export interface SendRequest {
+    /**
+     * Recipient. One of:
+     *   - Phone number (`+1234567890`) or email (`user@example.com`)
+     *     for a DM.
+     *   - A chatId shape returned by the SDK (e.g. `message.chatId` or
+     *     `chat.id`) to reply to or continue an existing conversation.
+     *
+     * Group chatIds must come from the SDK — they encode Messages.app
+     * internal GUIDs that cannot be reconstructed from user data.
+     */
+    readonly to: string
 
-// -----------------------------------------------
-// Types
-// -----------------------------------------------
-
-/** Message content payload. */
-export interface SendContent {
+    /** Message body. Optional when `attachments` is non-empty. */
     readonly text?: string
+
+    /**
+     * Local file paths only. Download remote URLs yourself and pass
+     * the resulting local path.
+     *
+     * Paths outside TCC-safe directories (`~/Pictures`, `~/Downloads`,
+     * `~/Documents`) are copied into `~/Pictures/imsg_temp_*` before
+     * AppleScript dispatch — the Messages.app sandbox rejects direct
+     * attachment from arbitrary locations. The copies are removed by a
+     * background cleanup pass (default: every 5 min, files older than
+     * 10 min), NOT synchronously after send.
+     */
     readonly attachments?: readonly string[]
-}
-
-/** Request to send a message. */
-export interface SendRequest extends SendContent {
-    readonly to: string
-    readonly timeout?: number
-    /** Requested transport. Only `iMessage` is currently supported for outbound sends. */
-    readonly service?: Service
-    readonly signal?: AbortSignal
-}
-
-/** Successful send result. Failures throw IMessageError. */
-export interface SendResult {
-    readonly chatId: string
-    readonly to: string
-    readonly service: Service
-    readonly sentAt: Date
-    readonly message?: Message
 }

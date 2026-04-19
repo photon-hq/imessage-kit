@@ -32,7 +32,7 @@ function createMessage(rowId: number): Message {
         wasDeliveredQuietly: false,
         isEmergencySos: false,
         isCriticalAlert: false,
-        isOffGridMessage: false,
+        isOffGrid: false,
         createdAt: new Date(rowId * 1000),
         deliveredAt: null,
         readAt: null,
@@ -63,7 +63,7 @@ describe('MessageDispatcher', () => {
         const events: string[] = []
         const dispatcher = new MessageDispatcher({
             events: {
-                onMessage: async (message) => {
+                onIncomingMessage: async (message) => {
                     events.push(`start-${message.rowId}`)
 
                     if (message.rowId === 1) {
@@ -111,19 +111,177 @@ describe('MessageDispatcher', () => {
         expect(received).toEqual([1])
     })
 
-    it('skips isFromMe messages for event dispatch', async () => {
-        const received: number[] = []
+    it('routes isFromMe messages to onFromMeMessage only, not onIncomingMessage/onDirect/onGroup', async () => {
+        const incoming: number[] = []
+        const direct: number[] = []
+        const group: number[] = []
+        const fromMe: number[] = []
         const dispatcher = new MessageDispatcher({
             events: {
-                onMessage: (msg) => {
-                    received.push(msg.rowId)
+                onIncomingMessage: (msg) => {
+                    incoming.push(msg.rowId)
+                },
+                onDirectMessage: (msg) => {
+                    direct.push(msg.rowId)
+                },
+                onGroupMessage: (msg) => {
+                    group.push(msg.rowId)
+                },
+                onFromMeMessage: (msg) => {
+                    fromMe.push(msg.rowId)
                 },
             },
         })
 
-        const fromMe = { ...createMessage(1), isFromMe: true }
-        await dispatcher.dispatch([fromMe])
+        const fromMeDm = { ...createMessage(1), isFromMe: true }
+        const fromMeGroup = {
+            ...createMessage(2),
+            isFromMe: true,
+            chatKind: 'group' as const,
+            chatId: 'iMessage;+;chat123',
+        }
+        await dispatcher.dispatch([fromMeDm, fromMeGroup])
 
-        expect(received).toEqual([])
+        expect(incoming).toEqual([])
+        expect(direct).toEqual([])
+        expect(group).toEqual([])
+        expect(fromMe).toEqual([1, 2])
+    })
+
+    it('partitions batches — incoming and from-me each reach their branch', async () => {
+        const incoming: number[] = []
+        const fromMe: number[] = []
+        const dispatcher = new MessageDispatcher({
+            events: {
+                onIncomingMessage: (msg) => {
+                    incoming.push(msg.rowId)
+                },
+                onFromMeMessage: (msg) => {
+                    fromMe.push(msg.rowId)
+                },
+            },
+        })
+
+        await dispatcher.dispatch([
+            createMessage(1),
+            { ...createMessage(2), isFromMe: true },
+            createMessage(3),
+            { ...createMessage(4), isFromMe: true },
+        ])
+
+        expect(incoming).toEqual([1, 3])
+        expect(fromMe).toEqual([2, 4])
+    })
+
+    it('chatKind="unknown" still reaches onIncomingMessage but neither onDirect nor onGroup', async () => {
+        const incoming: number[] = []
+        const direct: number[] = []
+        const group: number[] = []
+        const dispatcher = new MessageDispatcher({
+            events: {
+                onIncomingMessage: (msg) => {
+                    incoming.push(msg.rowId)
+                },
+                onDirectMessage: (msg) => {
+                    direct.push(msg.rowId)
+                },
+                onGroupMessage: (msg) => {
+                    group.push(msg.rowId)
+                },
+            },
+        })
+
+        const unknownKind = { ...createMessage(7), chatKind: 'unknown' as const, chatId: null }
+        await dispatcher.dispatch([unknownKind])
+
+        expect(incoming).toEqual([7])
+        expect(direct).toEqual([])
+        expect(group).toEqual([])
+    })
+
+    it('forwards incoming messages to sink.onIncomingMessage (plugin integration)', async () => {
+        const sinkIncoming: number[] = []
+        const sinkFromMe: number[] = []
+        const sinkErrors: string[] = []
+        const dispatcher = new MessageDispatcher({
+            sink: {
+                onIncomingMessage: async (msg) => {
+                    sinkIncoming.push(msg.rowId)
+                },
+                onFromMe: async (msg) => {
+                    sinkFromMe.push(msg.rowId)
+                },
+                onError: (err) => {
+                    sinkErrors.push(err.message)
+                },
+            },
+        })
+
+        await dispatcher.dispatch([createMessage(1), { ...createMessage(2), isFromMe: true }])
+
+        expect(sinkIncoming).toEqual([1])
+        expect(sinkFromMe).toEqual([2])
+        expect(sinkErrors).toEqual([])
+    })
+
+    it('routes an onIncomingMessage user-callback throw through onError without breaking later messages', async () => {
+        const errors: string[] = []
+        const seen: number[] = []
+        const dispatcher = new MessageDispatcher({
+            events: {
+                onIncomingMessage: (msg) => {
+                    seen.push(msg.rowId)
+                    if (msg.rowId === 1) throw new Error('handler blew up')
+                },
+                onError: (err) => {
+                    errors.push(err.message)
+                },
+            },
+        })
+
+        await dispatcher.dispatch([createMessage(1), createMessage(2)])
+
+        expect(seen).toEqual([1, 2])
+        expect(errors).toEqual(['handler blew up'])
+    })
+
+    it('is a no-op for an empty batch', async () => {
+        const seen: number[] = []
+        const dispatcher = new MessageDispatcher({
+            events: {
+                onIncomingMessage: (msg) => {
+                    seen.push(msg.rowId)
+                },
+                onFromMeMessage: (msg) => {
+                    seen.push(msg.rowId)
+                },
+            },
+        })
+
+        await dispatcher.dispatch([])
+        expect(seen).toEqual([])
+    })
+
+    it('an error in the from-me branch does not stop incoming dispatch', async () => {
+        const incoming: number[] = []
+        const errors: string[] = []
+        const dispatcher = new MessageDispatcher({
+            events: {
+                onIncomingMessage: (msg) => {
+                    incoming.push(msg.rowId)
+                },
+                onFromMeMessage: () => {
+                    throw new Error('from-me blew up')
+                },
+                onError: (err) => {
+                    errors.push(err.message)
+                },
+            },
+        })
+
+        await dispatcher.dispatch([createMessage(1), { ...createMessage(2), isFromMe: true }])
+
+        expect(incoming).toEqual([1])
+        expect(errors).toEqual(['from-me blew up'])
     })
 })

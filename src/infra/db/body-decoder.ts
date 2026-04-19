@@ -4,38 +4,15 @@
 
 import { NSAttributedString, Unarchiver } from '@parseaple/typedstream'
 
-// -----------------------------------------------
-// Internal
-// -----------------------------------------------
-
-function firstAttributedString(decoded: unknown): string | null {
-    const items = Array.isArray(decoded) ? decoded : [decoded]
-
-    for (const item of items) {
-        if (item instanceof NSAttributedString && item.string) {
-            return item.string
-        }
-
-        if (item !== null && typeof item === 'object' && 'values' in item && Array.isArray(item.values)) {
-            for (const val of item.values) {
-                if (val instanceof NSAttributedString && val.string) {
-                    return val.string
-                }
-            }
-        }
-    }
-
-    return null
-}
-
-// -----------------------------------------------
-// Public
-// -----------------------------------------------
-
 /**
  * Extract plain text from a Messages `attributedBody` column BLOB.
  *
- * Returns `null` on any decode error or when no text content is found.
+ * The BLOB is a NeXTSTEP typedstream whose single root value is an
+ * `NSAttributedString`. We ask the unarchiver for the unwrapped root
+ * directly — `decodeAll()` would return the outer `TypedGroup` wrappers,
+ * which is one level above the object we want.
+ *
+ * Returns `null` on any decode error or when no string content is found.
  */
 export function extractTextFromAttributedBody(blob: Buffer | Uint8Array): string | null {
     try {
@@ -43,10 +20,13 @@ export function extractTextFromAttributedBody(blob: Buffer | Uint8Array): string
 
         if (buffer.length === 0) return null
 
-        const decoded = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeAll()
-        if (!decoded) return null
+        const root = Unarchiver.open(buffer, Unarchiver.BinaryDecoding.decodable).decodeSingleRoot()
 
-        return firstAttributedString(decoded)
+        if (root instanceof NSAttributedString && root.string) {
+            return root.string
+        }
+
+        return null
     } catch {
         return null
     }

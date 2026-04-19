@@ -1,11 +1,18 @@
 /**
- * Built-in configurable logger plugin.
+ * Example: configurable logger plugin.
  *
- * Provides structured log output for SDK operations with optional
- * ANSI colors, ISO timestamps, and per-hook filtering.
+ * Copy this into your app and adapt it to your logger of choice
+ * (pino, winston, console, etc.). Not part of the SDK core —
+ * the SDK emits events through plugin hooks and `debug: true`;
+ * application-layer logging is the user's responsibility.
+ *
+ * When copying this file into your own project, change the import below
+ * from the in-repo path to the published package name:
+ *
+ *   import type { Plugin } from '@photon-ai/imessage-kit'
  */
 
-import type { Plugin } from '../../types/plugin'
+import type { Plugin } from '../src/types/plugin'
 
 // -----------------------------------------------
 // Types
@@ -85,13 +92,16 @@ export const loggerPlugin = (options: LoggerOptions = {}): Plugin => {
             log('info', `[SEND] Sending to ${request.to}: ${preview}${attachInfo}`)
         },
 
-        onAfterSend: ({ request }) => {
-            if (logSend) {
-                log('info', `[OK] Sent successfully -> ${request.to}`)
-            }
+        onFromMe: ({ message }) => {
+            if (!logSend) return
+
+            // Fires for every from-me row the watcher observes, including
+            // SDK sends, sends from other Apple clients, and Messages.app UI.
+            // Authoritative source of "my send landed in chat.db".
+            log('info', `[OK] Landed (${message.id})`)
         },
 
-        onNewMessage: ({ message }) => {
+        onIncomingMessage: ({ message }) => {
             if (!logNewMessage) return
 
             const preview = message.text?.substring(0, 40) || '(no text)'
