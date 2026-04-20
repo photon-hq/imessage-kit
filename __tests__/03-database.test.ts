@@ -273,7 +273,8 @@ describe('MessagesDatabaseReader', () => {
             })
 
             const messages = await database.getMessages()
-            expect(messages[0]?.service).toBeNull()
+            const unknown = messages.find((m) => m.text === 'Unknown')
+            expect(unknown?.service).toBeNull()
         })
     })
 

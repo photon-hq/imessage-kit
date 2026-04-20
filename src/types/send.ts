@@ -9,7 +9,7 @@ export interface SendRequest {
      *   - Phone number (`+1234567890`) or email (`user@example.com`)
      *     for a DM.
      *   - A chatId shape returned by the SDK (e.g. `message.chatId` or
-     *     `chat.id`) to reply to or continue an existing conversation.
+     *     `chat.chatId`) to reply to or continue an existing conversation.
      *
      * Group chatIds must come from the SDK — they encode Messages.app
      * internal GUIDs that cannot be reconstructed from user data.

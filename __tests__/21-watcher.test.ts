@@ -319,8 +319,10 @@ describe('MessageWatchSource — consume loop', () => {
     it('stop() waits for the in-flight onBatch to finish before resolving', async () => {
         const { MessageWatchSource } = await import('../src/infra/db/watcher')
 
+        let onBatchStarted = false
         let onBatchResolved = false
         const onBatch = async () => {
+            onBatchStarted = true
             await new Promise((r) => setTimeout(r, 40))
             onBatchResolved = true
         }
@@ -336,8 +338,9 @@ describe('MessageWatchSource — consume loop', () => {
         })
 
         await source.start()
-        // Wait until the consumer definitely entered onBatch.
-        await waitFor(() => onBatchResolved === false && source !== null, 30)
+        // Wait until the consumer has actually entered onBatch, otherwise stop()
+        // races ahead and isRunning=false makes the loop exit before dispatch.
+        await waitFor(() => onBatchStarted, 500, 5)
 
         await source.stop()
         // Post-stop, the in-flight handler must have finished.

@@ -273,21 +273,6 @@ await sdk.startWatching({
 })
 ```
 
-### Correlate a send with its chat.db row
-
-```typescript
-const sends = new Map<string /* text */, Promise<Message>>()
-
-await sdk.startWatching({
-    onFromMeMessage: (msg) => {
-        const waiter = msg.text ? sends.get(msg.text) : null
-        if (waiter && msg.text) sends.set(msg.text, Promise.resolve(msg))
-    },
-})
-
-await sdk.send({ to: '+1234567890', text: 'ping' })
-```
-
 ---
 
 ## Attachments

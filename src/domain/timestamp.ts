@@ -18,10 +18,11 @@ export const MAC_EPOCH = new Date('2001-01-01T00:00:00Z').getTime()
 /**
  * Convert a JS Date to a macOS nanosecond timestamp.
  *
- * Returned as a `number`. For any date past the early 1970s the value
- * exceeds `Number.MAX_SAFE_INTEGER`, so precision below ~100 ns is lost.
- * Millisecond-level precision — the resolution of `Date` itself — is
- * always preserved, which is sufficient for chat.db WHERE comparisons.
+ * Returned as a `number`. The 2001-01-01 epoch means `Number.MAX_SAFE_INTEGER`
+ * is exceeded after ~104 days (≈ April 2001), so precision below ~100 ns is
+ * lost for any real-world date. Millisecond-level precision — the resolution
+ * of `Date` itself — is always preserved, which is sufficient for chat.db
+ * WHERE comparisons.
  */
 export function toMacTimestampNs(date: Date): number {
     return (date.getTime() - MAC_EPOCH) * 1_000_000

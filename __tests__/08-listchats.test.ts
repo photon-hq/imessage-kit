@@ -105,11 +105,11 @@ describe('listChats', () => {
 
         // At least 2 chats inserted; newer message (group at -1000) was inserted
         // after the DM (-2000), so group should come first under 'recent'.
-        const [first, ...rest] = recent
-        const firstTs = first?.lastMessageAt?.getTime() ?? 0
-        for (const c of rest) {
-            const ts = c.lastMessageAt?.getTime() ?? 0
-            expect(firstTs).toBeGreaterThanOrEqual(ts)
+        // Check pairwise so an order like [t3, t1, t2] is caught.
+        for (let i = 1; i < recent.length; i++) {
+            const prev = recent[i - 1]?.lastMessageAt?.getTime() ?? 0
+            const curr = recent[i]?.lastMessageAt?.getTime() ?? 0
+            expect(prev).toBeGreaterThanOrEqual(curr)
         }
     })
 
