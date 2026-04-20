@@ -32,7 +32,6 @@ A full-featured iMessage SDK for **reading**, **sending**, and **automating** iM
 | [List Chats](#list-chats) | `sdk.listChats()` | [06-list-chats.ts](./examples/06-list-chats.ts) |
 | [Real-time Watching](#real-time-watching) | `sdk.startWatching()` | [07-watch-messages.ts](./examples/07-watch-messages.ts) |
 | [Auto Reply](#auto-reply) | `onDirectMessage` → `sdk.send()` | [08-auto-reply.ts](./examples/08-auto-reply.ts) |
-| [Correlate Send → chat.db](#correlate-a-send-with-its-chatdb-row) | `onFromMeMessage` | [09-get-sent-message.ts](./examples/09-get-sent-message.ts) |
 | [Plugin System](#plugin-system) | `sdk.use()` | [10-plugin.ts](./examples/10-plugin.ts) |
 | [Error Handling](#error-handling) | `IMessageError` | [11-error-handling.ts](./examples/11-error-handling.ts) |
 
@@ -71,6 +70,7 @@ await sdk.close()
 ### Configuration
 
 ```typescript
+// Simplified; `readonly` modifiers omitted for readability — see src/types/config.ts
 interface IMessageConfig {
     databasePath?: string        // Path to Messages SQLite database (default: ~/Library/Messages/chat.db)
     maxConcurrentSends?: number  // Concurrent send cap (default 10, range 1..50)
@@ -117,6 +117,7 @@ await sdk.startWatching({
 `sdk.send(request: SendRequest): Promise<void>`
 
 ```typescript
+// Simplified; `readonly` modifiers omitted for readability — see src/types/send.ts
 interface SendRequest {
     to: string                  // phone, email, or chatId
     text?: string
