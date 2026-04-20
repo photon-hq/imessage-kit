@@ -268,11 +268,7 @@ export class MessageWatchSource {
         const dir = dirname(this.databasePath)
         const watcher = this.watchFactory(dir, (_eventType, filename) => {
             const name =
-                typeof filename === 'string'
-                    ? filename
-                    : Buffer.isBuffer(filename)
-                      ? filename.toString('utf8')
-                      : null
+                typeof filename === 'string' ? filename : Buffer.isBuffer(filename) ? filename.toString('utf8') : null
 
             if (name !== this.walFilename) return
 
