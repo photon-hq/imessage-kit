@@ -12,7 +12,6 @@ await sdk.startWatching({
 })
 
 process.on('SIGINT', async () => {
-    sdk.stopWatching()
     await sdk.close()
     process.exit(0)
 })

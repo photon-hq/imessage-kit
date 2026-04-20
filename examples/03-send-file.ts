@@ -2,10 +2,17 @@ import { IMessageSDK } from '../src'
 
 const sdk = new IMessageSDK()
 
-// Convenience method for single file
-await sdk.sendFile('pilot@photon.codes', '/path/to/document.pdf', 'Here is the report')
+// Single file with text
+await sdk.send({
+    to: 'recipient@example.com',
+    text: 'Here is the report',
+    attachments: ['/path/to/document.pdf'],
+})
 
 // Multiple files
-await sdk.sendFiles('pilot@photon.codes', ['/data.csv', '/chart.png'])
+await sdk.send({
+    to: 'recipient@example.com',
+    attachments: ['/data.csv', '/chart.png'],
+})
 
 await sdk.close()

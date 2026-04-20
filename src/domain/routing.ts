@@ -1,13 +1,12 @@
 /**
  * Message target resolution.
  *
- * Routes a user-provided input string into either a DM (buddy method)
- * or group (chat ID method) send target.
+ * Maps a user-provided target string to either a DM (buddy method) or
+ * group (chat method) send target. Format validity is delegated to
+ * `ChatId.validate()`; this function only decides the routing kind.
  */
 
 import { ChatId } from './chat-id'
-import { SendError } from './errors'
-import { validateRecipient } from './validate'
 
 // -----------------------------------------------
 // Types
@@ -15,7 +14,7 @@ import { validateRecipient } from './validate'
 
 /** Discriminated union for resolved send targets. */
 export type MessageTarget =
-    | { readonly kind: 'dm'; readonly recipient: string; readonly chatIdHint: string }
+    | { readonly kind: 'dm'; readonly recipient: string }
     | { readonly kind: 'group'; readonly chatId: ChatId }
 
 // -----------------------------------------------
@@ -23,46 +22,27 @@ export type MessageTarget =
 // -----------------------------------------------
 
 /**
- * Resolve a user-provided input into a send target.
+ * Resolve a target string.
  *
- * Decision order:
- *   1. Explicit group format (`;+;` or bare GUID) → group target
- *   2. No semicolons → DM target (validates as phone/email, throws on invalid)
- *   3. Service-prefixed DM (`;-;`) → DM target (validates recipient, throws on invalid)
- *   4. Unrecognized semicolon format → group target
+ * Exposed publicly so callers can pre-validate a `to` value (and branch
+ * on DM vs group) before calling `sdk.send()` — the SDK itself invokes
+ * this internally, so you only need it for up-front validation or
+ * routing-aware UI.
  *
- * Throws `IMessageError` with code `SEND` for invalid inputs.
+ * Accepted formats (enforced by `ChatId.validate`):
+ *
+ *   service;+;guid  /  chat<id>        → group
+ *   service;-;addr  /  bare address    → DM
+ *
+ * Throws `IMessageError` (code `CONFIG`) for empty or malformed input.
  */
 export function resolveTarget(input: string): MessageTarget {
-    if (input === '') {
-        throw SendError('Target cannot be empty')
-    }
+    const chatId = ChatId.fromUserInput(input)
+    chatId.validate()
 
-    const trimmed = input.trim()
-    if (trimmed === '') {
-        throw SendError('Target cannot be empty')
-    }
-
-    const chatId = ChatId.fromUserInput(trimmed)
-
-    // 1. Explicit group format (`;+;` or bare GUID starting with "chat")
     if (chatId.isGroup) {
         return { kind: 'group', chatId }
     }
 
-    // 2. Bare recipient (no semicolons) — must be a valid phone or email
-    if (!trimmed.includes(';')) {
-        const validated = validateRecipient(trimmed)
-        return { kind: 'dm', recipient: validated, chatIdHint: trimmed }
-    }
-
-    // 3. Service-prefixed DM (`;-;`)
-    const recipient = chatId.extractRecipient()
-    if (recipient != null) {
-        const validated = validateRecipient(recipient)
-        return { kind: 'dm', recipient: validated, chatIdHint: trimmed }
-    }
-
-    // 4. Unrecognized semicolon format — treat as group chat id
-    return { kind: 'group', chatId }
+    return { kind: 'dm', recipient: chatId.extractRecipient() ?? chatId.raw }
 }

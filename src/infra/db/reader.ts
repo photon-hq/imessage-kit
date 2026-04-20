@@ -1,9 +1,15 @@
 /**
  * Messages database reader.
  *
- * Merges the query engine and store into a single class that extends
- * SqliteClient. Detects the schema version, builds queries via the
- * appropriate schema adapter, executes them, and maps rows to domain models.
+ * Extends SqliteClient with a query adapter (MessagesDbQueries), executes
+ * the adapter's SQL, and maps rows to domain models. Currently wired to
+ * macos26Queries; swap the assignment in the constructor to route a future
+ * schema (e.g. macOS 27).
+ *
+ * Organization: the public class is a thin delegate façade — all work lives
+ * in module-level free functions that take `(exec, queries, ...)` as
+ * explicit dependencies. Keeps internal operations pure and testable
+ * without reader instance state.
  */
 
 import type { Attachment } from '../../domain/attachment'
@@ -11,9 +17,10 @@ import type { Chat } from '../../domain/chat'
 import { DatabaseError, toErrorMessage } from '../../domain/errors'
 import type { Message } from '../../domain/message'
 import type { ChatQuery, MessageQuery } from '../../types/query'
-import type { MessageQueryInput, MessagesDbQueries, QueryExecutor, SchemaId, SqlQuery } from './contract'
+import { delay } from '../../utils/async'
+import type { MessageQueryInput, MessagesDbQueries, QueryExecutor, SqlQuery } from './contract'
 import { macos26Queries } from './macos26'
-import { parseNumber, requireNumber, rowToAttachment, rowToChat, rowToMessage } from './mapper'
+import { parseNumber, patchMessageChatInfo, requireNumber, rowToAttachment, rowToChat, rowToMessage } from './mapper'
 import { SqliteClient } from './sqlite-adapter'
 
 // -----------------------------------------------
@@ -23,57 +30,83 @@ import { SqliteClient } from './sqlite-adapter'
 const ATTACHMENT_QUERY_CHUNK = 500
 const SEARCH_PAGE_SIZE = 200
 
-// -----------------------------------------------
-// Schema resolution
-// -----------------------------------------------
-
-const QUERIES_BY_SCHEMA: Record<SchemaId, MessagesDbQueries> = {
-    macos26: macos26Queries,
-}
-
 /**
- * Detect the schema version from the message table columns.
- *
- * Currently always returns 'macos26'. Future macOS 27 support will
- * add a column check here (e.g. a new column unique to macOS 27).
+ * Delay between backfill attempts. Absorbs the Messages.app two-write gap.
+ * Heuristic — combined with CHAT_BACKFILL_MAX_RETRIES the total budget
+ * before surrender is ~400ms.
  */
-export function resolveSchemaId(columns: readonly string[]): SchemaId {
-    void columns
-    return 'macos26'
-}
+const CHAT_BACKFILL_RETRY_DELAY_MS = 200
+
+/** Retries after the initial attempt. */
+const CHAT_BACKFILL_MAX_RETRIES = 2
 
 // -----------------------------------------------
-// Internal query execution
+// MessagesDatabaseReader
 // -----------------------------------------------
 
-function queryMaxRowId(exec: QueryExecutor): number {
-    try {
-        const rows = exec('SELECT MAX(ROWID) as max_id FROM message')
-        return parseNumber(rows[0]?.max_id) ?? 0
-    } catch (error) {
-        throw DatabaseError(`Failed to read max ROWID: ${toErrorMessage(error)}`)
+/** High-level Messages database reader: runs the query adapter's SQL and maps rows to domain models. */
+export class MessagesDatabaseReader extends SqliteClient {
+    private readonly queries: MessagesDbQueries
+    private readonly exec: QueryExecutor
+
+    constructor(path: string) {
+        super(path, true)
+        this.exec = (sql, params) => this.all(sql, params ?? [])
+        this.queries = macos26Queries
+    }
+
+    /** Get the current maximum message ROWID. */
+    async getMaxRowId(): Promise<number> {
+        return queryMaxRowId(this.exec, this.queries)
+    }
+
+    /** Query messages with optional filters. */
+    async getMessages(query: MessageQuery = {}): Promise<readonly Message[]> {
+        return queryMessages(this.exec, this.queries, query)
+    }
+
+    /** Query messages newer than the given ROWID, ordered ascending. */
+    async getMessagesSinceRowId(sinceRowId: number, query: MessageQuery = {}): Promise<readonly Message[]> {
+        const messages = queryMessages(this.exec, this.queries, {
+            ...query,
+            sinceRowId,
+            orderByRowIdAsc: true,
+        })
+        return backfillMissingChatInfo(this.exec, this.queries, messages)
+    }
+
+    /** List chats with optional filters and sorting. */
+    async listChats(query: ChatQuery = {}): Promise<readonly Chat[]> {
+        return queryChats(this.exec, this.queries, query)
     }
 }
 
-interface ExecuteOptions {
-    readonly includeAttachments?: boolean
+// -----------------------------------------------
+// Message query
+// -----------------------------------------------
+
+function queryMessages(exec: QueryExecutor, queries: MessagesDbQueries, input: MessageQueryInput): readonly Message[] {
+    const { search } = input
+    if (search) {
+        return searchMessages(exec, queries, { ...input, search })
+    }
+
+    return executeMessageQuery(exec, queries, queries.buildMessageQuery(input))
 }
 
 function executeMessageQuery(
     exec: QueryExecutor,
     queries: MessagesDbQueries,
     sqlQuery: SqlQuery,
-    options: ExecuteOptions = {}
+    includeAttachments = true
 ): readonly Message[] {
-    const includeAttachments = options.includeAttachments ?? true
-
     let messages: readonly Message[]
 
     try {
         const rows = exec(sqlQuery.sql, sqlQuery.params)
         messages = rows.map((row) => rowToMessage(row, []))
     } catch (error) {
-        throw DatabaseError(`Failed to query messages: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to query messages: ${toErrorMessage(error)}`, error)
     }
 
     if (!includeAttachments) {
@@ -83,32 +116,28 @@ function executeMessageQuery(
     return mergeAttachments(exec, queries, messages)
 }
 
-function queryMessages(exec: QueryExecutor, queries: MessagesDbQueries, input: MessageQueryInput): readonly Message[] {
-    if (input.search) {
-        return searchMessages(exec, queries, input)
-    }
-
-    return executeMessageQuery(exec, queries, queries.buildMessageQuery(input))
-}
-
-// -----------------------------------------------
-// Application-level text search
-// -----------------------------------------------
-
+/**
+ * Application-layer search over decoded text.
+ *
+ * SQL LIKE on `message.text` would drop rows whose body lives only in the
+ * `attributedBody` BLOB (the norm on macOS 26). We scan in pages, decode
+ * each row, and match against the final text.
+ */
 function searchMessages(
     exec: QueryExecutor,
     queries: MessagesDbQueries,
-    filter: MessageQueryInput
+    filter: MessageQueryInput & { readonly search: string }
 ): readonly Message[] {
-    const search = filter.search?.toLowerCase()
-
-    if (!search) {
-        return executeMessageQuery(exec, queries, queries.buildMessageQuery(filter))
-    }
+    const { search: rawSearch, ...sqlFilter } = filter
+    const search = rawSearch.toLowerCase()
 
     const requestedOffset = filter.offset ?? 0
     const requestedLimit = filter.limit ?? Number.POSITIVE_INFINITY
+    // offset applies to matches, not scanned rows — accumulate the full
+    // (offset + limit) window before slicing below.
     const requiredMatches = requestedOffset + requestedLimit
+    // If the caller's limit exceeds the default page size, page at that
+    // size to cut the number of SQL round-trips.
     const pageSize = Math.max(SEARCH_PAGE_SIZE, filter.limit ?? 0)
     const matches: Message[] = []
     let scanOffset = 0
@@ -117,12 +146,8 @@ function searchMessages(
         const page = executeMessageQuery(
             exec,
             queries,
-            queries.buildMessageQuery({
-                ...filter,
-                limit: pageSize,
-                offset: scanOffset,
-            }),
-            { includeAttachments: false }
+            queries.buildMessageQuery({ ...sqlFilter, limit: pageSize, offset: scanOffset }),
+            false
         )
 
         if (page.length === 0) break
@@ -138,8 +163,85 @@ function searchMessages(
         scanOffset += pageSize
     }
 
+    // Apply the requested offset/limit window to matches (not scanned rows).
     const end = Number.isFinite(requestedLimit) ? requestedOffset + requestedLimit : undefined
     return mergeAttachments(exec, queries, matches.slice(requestedOffset, end))
+}
+
+// -----------------------------------------------
+// Chat-info backfill (WAL race mitigation)
+// -----------------------------------------------
+
+/**
+ * Messages.app writes a new message row and its `chat_message_join` row as
+ * two separate SQLite writes. A WAL-triggered watcher can observe the first
+ * write before the second, so the LEFT JOIN in `buildMessageQuery` comes
+ * back with `chat.*` all NULL — leaving `chatId === null` / `chatKind ===
+ * 'unknown'` and silently routing the message away from `onGroupMessage` /
+ * `onDirectMessage`.
+ *
+ * Mitigation: re-query chat metadata for any `chatId == null` row, with up
+ * to `CHAT_BACKFILL_MAX_RETRIES` retries spaced by
+ * `CHAT_BACKFILL_RETRY_DELAY_MS`. Skipped entirely when every row already
+ * has a chat resolved (the common case). Rows still unjoined after the
+ * budget are surfaced as-is — `chatId = null` is part of the public
+ * contract (see llms.txt "Auto-Reply Bot").
+ */
+async function backfillMissingChatInfo(
+    exec: QueryExecutor,
+    queries: MessagesDbQueries,
+    messages: readonly Message[]
+): Promise<readonly Message[]> {
+    const collectMissing = (list: readonly Message[]): number[] => {
+        const ids: number[] = []
+        for (const message of list) {
+            if (message.chatId == null) ids.push(message.rowId)
+        }
+        return ids
+    }
+
+    let current = messages
+    let missing = collectMissing(current)
+    if (missing.length === 0) return current
+
+    for (let attempt = 0; attempt <= CHAT_BACKFILL_MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+            await delay(CHAT_BACKFILL_RETRY_DELAY_MS)
+        }
+        current = runChatBackfillOnce(exec, queries, current, missing)
+        missing = collectMissing(current)
+        if (missing.length === 0) break
+    }
+
+    return current
+}
+
+function runChatBackfillOnce(
+    exec: QueryExecutor,
+    queries: MessagesDbQueries,
+    messages: readonly Message[],
+    missingIds: readonly number[]
+): readonly Message[] {
+    const query = queries.buildChatBackfillQuery(missingIds)
+    const byRowId = new Map<number, Record<string, unknown>>()
+
+    try {
+        const rows = exec(query.sql, query.params)
+        for (const row of rows) {
+            const id = parseNumber(row.message_rowid)
+            if (id != null) byRowId.set(id, row)
+        }
+    } catch (error) {
+        throw DatabaseError(`Failed to backfill chat info: ${toErrorMessage(error)}`, error)
+    }
+
+    if (byRowId.size === 0) return messages
+
+    return messages.map((message) => {
+        if (message.chatId != null) return message
+        const row = byRowId.get(message.rowId)
+        return row ? patchMessageChatInfo(message, row) : message
+    })
 }
 
 // -----------------------------------------------
@@ -149,7 +251,6 @@ function searchMessages(
 function queryChats(exec: QueryExecutor, queries: MessagesDbQueries, input: ChatQuery): readonly Chat[] {
     const sqlQuery = queries.buildChatQuery({
         ...input,
-        kind: input.kind ?? 'all',
         sortBy: input.sortBy ?? 'recent',
     })
 
@@ -157,7 +258,7 @@ function queryChats(exec: QueryExecutor, queries: MessagesDbQueries, input: Chat
         const rows = exec(sqlQuery.sql, sqlQuery.params)
         return rows.map((row) => rowToChat(row))
     } catch (error) {
-        throw DatabaseError(`Failed to list chats: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to list chats: ${toErrorMessage(error)}`, error)
     }
 }
 
@@ -212,7 +313,7 @@ function batchGetAttachments(
                 }
             }
         } catch (error) {
-            throw DatabaseError(`Failed to query attachments: ${toErrorMessage(error)}`)
+            throw DatabaseError(`Failed to query attachments: ${toErrorMessage(error)}`, error)
         }
     }
 
@@ -220,54 +321,15 @@ function batchGetAttachments(
 }
 
 // -----------------------------------------------
-// MessagesDatabaseReader
+// Misc
 // -----------------------------------------------
 
-/** High-level Messages database reader with schema detection and query orchestration. */
-export class MessagesDatabaseReader extends SqliteClient {
-    private readonly queries: MessagesDbQueries
-    private readonly exec: QueryExecutor
-
-    constructor(path: string) {
-        super(path, true)
-        this.exec = (sql, params) => this.all(sql, params ?? [])
-        this.queries = QUERIES_BY_SCHEMA[this.detectSchemaId()]
-    }
-
-    /** Get the current maximum message ROWID. */
-    async getMaxRowId(): Promise<number> {
-        return queryMaxRowId(this.exec)
-    }
-
-    /** Query messages with optional filters. */
-    async getMessages(query: MessageQuery = {}): Promise<readonly Message[]> {
-        return queryMessages(this.exec, this.queries, query)
-    }
-
-    /** Query messages newer than the given ROWID, ordered ascending. */
-    async getMessagesSinceRowId(sinceRowId: number, query: MessageQuery = {}): Promise<readonly Message[]> {
-        return queryMessages(this.exec, this.queries, {
-            ...query,
-            sinceRowId,
-            orderByRowIdAsc: true,
-        })
-    }
-
-    /** List chats with optional filters and sorting. */
-    async listChats(query: ChatQuery = {}): Promise<readonly Chat[]> {
-        return queryChats(this.exec, this.queries, query)
-    }
-
-    /** Search messages by text content (application-level filtering). */
-    async searchMessages(query: MessageQuery): Promise<readonly Message[]> {
-        return queryMessages(this.exec, this.queries, query)
-    }
-
-    private detectSchemaId(): SchemaId {
-        const rows = this.all("PRAGMA table_info('message')")
-        const columns = rows
-            .map((row) => row.name)
-            .filter((name): name is string => typeof name === 'string' && name !== '')
-        return resolveSchemaId(columns)
+function queryMaxRowId(exec: QueryExecutor, queries: MessagesDbQueries): number {
+    const { sql, params } = queries.buildMaxRowIdQuery()
+    try {
+        const rows = exec(sql, params)
+        return parseNumber(rows[0]?.max_id) ?? 0
+    } catch (error) {
+        throw DatabaseError(`Failed to read max ROWID: ${toErrorMessage(error)}`, error)
     }
 }

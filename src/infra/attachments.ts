@@ -1,25 +1,14 @@
 /**
- * Read-only file operations on existing message attachments.
+ * Read-only helpers for existing message attachments.
  *
- * Query-side helpers for working with attachment files already materialized
- * on disk. Intentionally separate from outbound attachment staging.
+ * Keeps only platform-relevant helpers: existence check with
+ * null-safe localPath, extension normalization, and type classification.
+ * Use node:fs directly for copy/read/stat — they are trivial wrappers.
  */
 
-import { access, copyFile, mkdir, readFile, stat } from 'node:fs/promises'
-import { dirname, extname } from 'node:path'
+import { access } from 'node:fs/promises'
+import { extname } from 'node:path'
 import type { Attachment } from '../domain/attachment'
-
-// -----------------------------------------------
-// Types
-// -----------------------------------------------
-
-/** File metadata for an on-disk attachment. */
-export interface AttachmentFileInfo {
-    readonly localPath: string
-    readonly size: number
-    readonly createdAt: Date
-    readonly modifiedAt: Date
-}
 
 // -----------------------------------------------
 // Extension Sets
@@ -32,19 +21,7 @@ const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'm4v', 'wmv', 'flv
 const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'wma'])
 
 // -----------------------------------------------
-// Internal
-// -----------------------------------------------
-
-function requireLocalPath(attachment: Attachment): string {
-    if (!attachment.localPath) {
-        throw new Error('Attachment does not have a local file path')
-    }
-
-    return attachment.localPath
-}
-
-// -----------------------------------------------
-// File Operations
+// Existence
 // -----------------------------------------------
 
 /** Check whether the attachment file exists on disk. */
@@ -56,47 +33,6 @@ export async function attachmentExists(attachment: Attachment): Promise<boolean>
         return true
     } catch {
         return false
-    }
-}
-
-/** Copy the attachment file to a destination path, creating directories as needed. */
-export async function copyAttachmentFile(attachment: Attachment, destPath: string): Promise<void> {
-    const localPath = requireLocalPath(attachment)
-    const destDir = dirname(destPath)
-    await mkdir(destDir, { recursive: true })
-    await copyFile(localPath, destPath)
-}
-
-/** Read the entire attachment file into a Buffer. */
-export async function readAttachmentBytes(attachment: Attachment): Promise<Buffer> {
-    return await readFile(requireLocalPath(attachment))
-}
-
-// -----------------------------------------------
-// Metadata
-// -----------------------------------------------
-
-/** Get the file size in bytes (returns 0 if unavailable). */
-export async function getAttachmentSize(attachment: Attachment): Promise<number> {
-    const info = await getAttachmentFileInfo(attachment)
-    return info?.size ?? 0
-}
-
-/** Get file metadata for an attachment, or null if the file is inaccessible. */
-export async function getAttachmentFileInfo(attachment: Attachment): Promise<AttachmentFileInfo | null> {
-    if (!attachment.localPath) return null
-
-    try {
-        const stats = await stat(attachment.localPath)
-
-        return {
-            localPath: attachment.localPath,
-            size: stats.size,
-            createdAt: stats.birthtime,
-            modifiedAt: stats.mtime,
-        }
-    } catch {
-        return null
     }
 }
 

@@ -4,16 +4,13 @@ const sdk = new IMessageSDK()
 
 await sdk.startWatching({
     onDirectMessage: async (msg) => {
-        await sdk.message(msg)
-            .ifFromOthers()
-            .matchText(/hello/i)
-            .replyText('Hi there!')
-            .execute()
+        if (!msg.text || !/hello/i.test(msg.text)) return
+        if (!msg.chatId) return // rare WAL race: chat_message_join not yet flushed
+        await sdk.send({ to: msg.chatId, text: 'Hi there!' })
     },
 })
 
 process.on('SIGINT', async () => {
-    sdk.stopWatching()
     await sdk.close()
     process.exit(0)
 })

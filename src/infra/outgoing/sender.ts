@@ -1,68 +1,72 @@
 /**
- * Message sender.
+ * SendPort implementation.
  *
- * Unified send pipeline implementing SendPort.
- * Resolves target internally (buddy vs chat method),
- * prepares attachments, executes AppleScript with retry,
- * and awaits database confirmation.
+ * Internal invariants:
+ *   - Every error raised by `send()` is an `IMessageError`. Recognised
+ *     `IMessageError` subclasses pass through with their original `code`
+ *     (CONFIG / DATABASE / SEND) preserved; anything else is wrapped as
+ *     `SendError` at the pipeline or semaphore boundary.
+ *   - Dispatch is non-transactional. A multi-attachment send that fails
+ *     mid-way leaves completed steps delivered; step numbering in the
+ *     error description shows where the failure landed so the caller
+ *     can retry only the remaining part.
+ *
+ * For the public contract of `send()` (acceptance vs delivery, hook
+ * ordering, cancellation), see `sdk.ts::IMessageSDK.send`.
  */
 
-import { existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
-import type { SendPort, SendRequest, SendResult } from '../../application/send-port'
+
+import type { SendPort } from '../../application/send-port'
 import type { ChatServicePrefix } from '../../domain/chat-id'
-import { ChatId } from '../../domain/chat-id'
 import { IMessageError, SendError, toErrorMessage } from '../../domain/errors'
-import type { Message } from '../../domain/message'
 import { resolveTarget } from '../../domain/routing'
 import { isURL, validateMessageContent } from '../../domain/validate'
+import type { SendRequest } from '../../types/send'
 import { delay, retry, type Semaphore } from '../../utils/async'
+
 import { detectChatServicePrefix } from '../platform'
-import { buildSendScript, checkMessagesApp, execAppleScript } from './applescript-transport'
-import { convertToCompatibleFormat, downloadImage } from './downloader'
-import { MessagePromise, type OutgoingMessageManager } from './tracker'
+import { buildSendScript, inspectAttachment, type ResolvedAttachment, type SendMethod } from './applescript-builder'
+import { execAppleScript, MessagesAppProbe } from './applescript-transport'
 
 // -----------------------------------------------
-// Send Defaults (inlined)
+// Defaults
 // -----------------------------------------------
 
+/** Per-osascript ceiling. Large attachments need headroom; beyond this is usually stuck. */
 const SEND_TIMEOUT_MS = 30_000
-const RETRY_MAX_RETRIES = 2
+
+/** Total attempts per script (including the first); value of 3 → 1 initial + 2 retries. */
+const RETRY_ATTEMPTS = 3
+
+/** Base backoff between retries (jitter on top). */
 const RETRY_DELAY_MS = 1_500
+
+/** Gap between successive attachments; prevents Messages.app from dropping the next file. */
+const INTER_ATTACHMENT_DELAY_MS = 500
 
 // -----------------------------------------------
 // Types
 // -----------------------------------------------
 
-type SendTarget = { readonly method: 'buddy' | 'chat'; readonly identifier: string }
+type SendTarget = { readonly method: SendMethod; readonly identifier: string }
 
 interface NormalizedSendJob {
     readonly target: SendTarget
-    readonly chatId: string
-    readonly service: 'iMessage'
     readonly text?: string
     readonly attachments: readonly string[]
-    readonly signal?: AbortSignal
-    readonly timeout?: number
-    readonly label: string
 }
 
 /** Options for constructing a MessageSender. */
-export interface MessageSenderOptions {
-    readonly outgoingManager?: OutgoingMessageManager
+interface MessageSenderOptions {
     readonly semaphore?: Semaphore
     readonly debug?: boolean
     readonly timeout?: number
+    /** Total attempts per AppleScript call including the first (matches `RetryOptions.attempts`). */
     readonly retryAttempts?: number
     readonly retryDelay?: number
-}
-
-function resolveRequestedService(service: SendRequest['service']): 'iMessage' {
-    if (service == null || service === 'iMessage') {
-        return 'iMessage'
-    }
-
-    throw SendError(`Outbound send service "${service}" is not supported`)
+    /** Abort signal that cancels all sends on SDK shutdown. */
+    readonly signal?: AbortSignal
 }
 
 // -----------------------------------------------
@@ -72,334 +76,164 @@ function resolveRequestedService(service: SendRequest['service']): 'iMessage' {
 /** Send orchestrator implementing the application-layer SendPort. */
 export class MessageSender implements SendPort {
     private readonly debug: boolean
-    private readonly maxRetries: number
+    private readonly retryAttempts: number
     private readonly retryDelay: number
-    private readonly semaphore: Semaphore | null
     private readonly sendTimeoutMs: number
-    private readonly outgoingManager: OutgoingMessageManager | null
     private readonly chatServicePrefix: ChatServicePrefix
+    private readonly semaphore?: Semaphore
+    private readonly signal?: AbortSignal
+    private readonly messagesApp = new MessagesAppProbe()
 
-    constructor(options: MessageSenderOptions = {}) {
-        this.debug = options.debug ?? false
-        this.maxRetries = options.retryAttempts ?? RETRY_MAX_RETRIES
-        this.retryDelay = options.retryDelay ?? RETRY_DELAY_MS
-        this.semaphore = options.semaphore ?? null
-        this.sendTimeoutMs = options.timeout ?? SEND_TIMEOUT_MS
-        this.outgoingManager = options.outgoingManager ?? null
+    constructor({
+        debug = false,
+        retryAttempts = RETRY_ATTEMPTS,
+        retryDelay = RETRY_DELAY_MS,
+        timeout = SEND_TIMEOUT_MS,
+        semaphore,
+        signal,
+    }: MessageSenderOptions = {}) {
+        this.debug = debug
+        this.retryAttempts = retryAttempts
+        this.retryDelay = retryDelay
+        this.sendTimeoutMs = timeout
+        this.semaphore = semaphore
+        this.signal = signal
         this.chatServicePrefix = detectChatServicePrefix()
     }
 
-    // -----------------------------------------------
-    // Public API
-    // -----------------------------------------------
+    /** Implements `SendPort.send`. */
+    async send(request: SendRequest): Promise<void> {
+        const job = this.createSendJob(request)
+        const task = () => this.runPipeline(job)
 
-    /** Send a message to a recipient or group chat. */
-    async send(request: SendRequest): Promise<SendResult> {
-        return this.executeSend(this.createSendJob(request))
+        try {
+            return await (this.semaphore ? this.semaphore.run(task, this.signal) : task())
+        } catch (error) {
+            // `runPipeline` already wraps everything it raises, so
+            // `IMessageError` passes through untouched. The uncovered
+            // case is an abort thrown inside `semaphore.acquire` BEFORE
+            // the task runs — wrap it here so the "always IMessageError"
+            // contract holds for queue-time cancellation.
+            if (error instanceof IMessageError) throw error
+            throw SendError('Send cancelled', error instanceof Error ? error : undefined)
+        }
     }
 
     // -----------------------------------------------
-    // Send Pipeline
+    // Pipeline
     // -----------------------------------------------
 
-    private async executeSend(job: NormalizedSendJob): Promise<SendResult> {
-        const { target, chatId, service, signal, timeout, label, text, attachments } = job
-        const effectiveTimeout = timeout ?? this.sendTimeoutMs
+    private async runPipeline(job: NormalizedSendJob): Promise<void> {
+        this.assertNotAborted()
 
-        const task = async (): Promise<SendResult> => {
-            this.checkAbortSignal(signal)
+        try {
+            validateMessageContent(job.text, job.attachments)
+            await this.assertMessagesAppRunning()
 
-            let hasText: boolean
-
-            try {
-                const validation = validateMessageContent(text, attachments)
-                hasText = validation.hasText
-            } catch (error) {
-                throw SendError(toErrorMessage(error))
-            }
-
-            try {
-                this.checkAbortSignal(signal)
-
-                await this.checkMessagesEnvironment()
-
-                const paths = await this.prepareAttachments(attachments, signal)
-
-                const sentAt = new Date()
-                const messagePromise = this.createTrackingPromise(chatId, text, hasText, paths, sentAt)
-
-                await this.executeAppleScripts(target, text, hasText, paths, effectiveTimeout, signal)
-
-                const confirmedMessage = await this.awaitConfirmation(messagePromise)
-
-                this.outgoingManager?.cleanup()
-
-                return {
-                    chatId,
-                    to: target.identifier,
-                    service,
-                    sentAt,
-                    message: confirmedMessage,
-                }
-            } catch (error) {
-                const errorMsg = toErrorMessage(error)
-                const context = `[${label}] [Text: ${hasText ? 'yes' : 'no'}] [Attachments: ${attachments.length}]`
-                const cause = error instanceof Error ? error : undefined
-
-                if (error instanceof IMessageError) {
-                    throw SendError(`${errorMsg} ${context}`, cause)
-                }
-
-                throw SendError(`Send failed ${context}: ${errorMsg}`, cause)
-            }
+            const attachments = job.attachments.map((a) => this.resolveAttachment(a))
+            await this.dispatch(job.target, job.text, attachments)
+        } catch (error) {
+            // Inner helpers already produce fully-contextual `IMessageError`
+            // (validate, attachment-precheck, dispatch all attach their own
+            // detail). Re-wrapping here would duplicate recipient/step info,
+            // so the catch only guarantees "always IMessageError" — it does
+            // not append extra context.
+            if (error instanceof IMessageError) throw error
+            throw SendError(`Send failed: ${toErrorMessage(error)}`, error instanceof Error ? error : undefined)
         }
-
-        return this.semaphore ? await this.semaphore.run(task, job.signal) : await task()
     }
 
     private createSendJob(request: SendRequest): NormalizedSendJob {
-        const { to, text, attachments = [], signal, timeout } = request
-        const resolved = resolveTarget(String(to))
-        const resolvedAttachments = [...attachments]
-        const service = resolveRequestedService(request.service)
+        const { to, text, attachments = [] } = request
+        const resolved = resolveTarget(to)
 
         if (resolved.kind === 'group') {
-            const parsed = resolved.chatId
-
-            try {
-                parsed.validate()
-            } catch (error) {
-                throw SendError(toErrorMessage(error))
-            }
-
-            const normalizedId = parsed.buildGroupGuid(this.chatServicePrefix)
-
-            return {
-                target: { method: 'chat', identifier: normalizedId },
-                chatId: to,
-                service,
-                text,
-                attachments: resolvedAttachments,
-                signal,
-                timeout,
-                label: `Group: ${normalizedId}`,
-            }
+            const identifier = resolved.chatId.buildGroupGuid(this.chatServicePrefix)
+            return { target: { method: 'chat', identifier }, text, attachments }
         }
 
-        const recipient = resolved.recipient
-
-        return {
-            target: { method: 'buddy', identifier: recipient },
-            chatId: ChatId.fromDMRecipient(recipient, this.chatServicePrefix).toString(),
-            service,
-            text,
-            attachments: resolvedAttachments,
-            signal,
-            timeout,
-            label: `To: ${recipient}`,
-        }
+        return { target: { method: 'buddy', identifier: resolved.recipient }, text, attachments }
     }
 
-    // -----------------------------------------------
-    // Pipeline Steps
-    // -----------------------------------------------
-
-    private createTrackingPromise(
-        chatId: string,
-        text: string | undefined,
-        hasText: boolean,
-        paths: string[],
-        sentAt: Date
-    ): MessagePromise | null {
-        if (!this.outgoingManager) return null
-
-        let messagePromise: MessagePromise | null = null
-
-        if (paths.length > 0) {
-            messagePromise = new MessagePromise({
-                chatId,
-                text,
-                attachmentName: paths[0] ? basename(paths[0]) : undefined,
-                isAttachment: true,
-                sentAt,
-            })
-        } else if (hasText) {
-            messagePromise = new MessagePromise({
-                chatId,
-                text,
-                isAttachment: false,
-                sentAt,
-            })
-        }
-
-        if (messagePromise) {
-            this.outgoingManager.add(messagePromise)
-        }
-
-        return messagePromise
-    }
-
-    private async executeAppleScripts(
+    private async dispatch(
         target: SendTarget,
         text: string | undefined,
-        hasText: boolean,
-        resolvedPaths: string[],
-        timeoutMs: number,
-        signal?: AbortSignal
+        attachments: ResolvedAttachment[]
     ): Promise<void> {
-        const { method, identifier: id } = target
-        const descPrefix = method === 'chat' ? `group ${id}` : id
+        const { method, identifier } = target
+        const prefix = method === 'chat' ? `group ${identifier}` : identifier
+        const total = attachments.length
+        const hasText = text != null && text !== ''
 
-        if (hasText && resolvedPaths.length > 0) {
-            // Send text + first attachment as a combined message
-            const firstAttachment = resolvedPaths[0] as string
-            const { script } = buildSendScript({ method, identifier: id, text, attachmentPath: firstAttachment })
-            await this.executeWithRetry(script, `Send text and attachment to ${descPrefix}`, timeoutMs, signal)
+        // Non-transactional: N attachments dispatch up to max(1, N)
+        // osascript calls (first call bundles text + attachments[0]; each
+        // later attachment is its own call). Retry is per-step, not
+        // end-to-end — worst case is `retryAttempts × max(1, N)` osascript
+        // invocations. Resuming mid-batch is the caller's job: re-invoke
+        // send() with attachments.slice(k-1).
+        const firstLabel = total === 0 ? 'text' : hasText ? `text + attachment 1/${total}` : `attachment 1/${total}`
+        const firstScript = buildSendScript({
+            method,
+            identifier,
+            text: hasText ? text : undefined,
+            attachment: attachments[0],
+        })
+        await this.executeWithRetry(firstScript, `Send ${firstLabel} to ${prefix}`)
 
-            // Send remaining attachments individually
-            for (let i = 1; i < resolvedPaths.length; i++) {
-                const path = resolvedPaths[i]
-                if (!path) continue
-
-                const { script: attachScript } = buildSendScript({
-                    method,
-                    identifier: id,
-                    attachmentPath: path,
-                })
-                await this.executeWithRetry(
-                    attachScript,
-                    `Send attachment ${i + 1}/${resolvedPaths.length}`,
-                    timeoutMs,
-                    signal
-                )
-
-                if (i < resolvedPaths.length - 1) await delay(500, signal)
-            }
-        } else if (hasText) {
-            const { script } = buildSendScript({ method, identifier: id, text })
-            await this.executeWithRetry(script, `Send text to ${descPrefix}`, timeoutMs, signal)
-        } else {
-            for (let i = 0; i < resolvedPaths.length; i++) {
-                const path = resolvedPaths[i]
-                if (!path) continue
-
-                const { script } = buildSendScript({ method, identifier: id, attachmentPath: path })
-                await this.executeWithRetry(
-                    script,
-                    `Send attachment ${i + 1}/${resolvedPaths.length} to ${descPrefix}`,
-                    timeoutMs,
-                    signal
-                )
-
-                if (i < resolvedPaths.length - 1) await delay(500, signal)
-            }
-        }
-    }
-
-    private async awaitConfirmation(messagePromise: MessagePromise | null): Promise<Message | undefined> {
-        if (!messagePromise) return undefined
-
-        try {
-            const message = await messagePromise.promise
-
-            if (this.debug) {
-                console.log('[Sender] Message confirmed in database')
-            }
-
-            return message
-        } catch (promiseError) {
-            if (this.debug) {
-                console.warn('[Sender] Message promise rejected:', promiseError)
-            }
-
-            return undefined
+        for (let i = 1; i < total; i++) {
+            await delay(INTER_ATTACHMENT_DELAY_MS, this.signal)
+            const script = buildSendScript({ method, identifier, attachment: attachments[i] })
+            await this.executeWithRetry(script, `Send attachment ${i + 1}/${total} to ${prefix}`)
         }
     }
 
     // -----------------------------------------------
-    // Shared Helpers
+    // Helpers
     // -----------------------------------------------
 
-    private async executeWithRetry(
-        script: string,
-        description: string,
-        timeoutMs: number,
-        signal?: AbortSignal
-    ): Promise<void> {
-        const totalAttempts = this.maxRetries + 1
-
+    private async executeWithRetry(script: string, description: string): Promise<void> {
         try {
-            await retry(() => execAppleScript(script, { debug: this.debug, timeout: timeoutMs }), {
-                attempts: totalAttempts,
-                delay: this.retryDelay,
-                signal,
-            })
+            await retry(
+                () => execAppleScript(script, { debug: this.debug, timeout: this.sendTimeoutMs, signal: this.signal }),
+                {
+                    attempts: this.retryAttempts,
+                    delay: this.retryDelay,
+                    signal: this.signal,
+                }
+            )
         } catch (error) {
-            throw SendError(`${description} failed after ${totalAttempts} attempts: ${toErrorMessage(error)}`)
+            throw SendError(
+                `${description} failed after ${this.retryAttempts} attempts: ${toErrorMessage(error)}`,
+                error instanceof Error ? error : undefined
+            )
         }
     }
 
-    private async resolveAttachment(path: string, signal?: AbortSignal): Promise<string> {
+    private resolveAttachment(path: string): ResolvedAttachment {
         if (isURL(path)) {
-            return await downloadImage(path, { debug: this.debug, signal })
+            throw SendError(
+                `URLs are not supported as attachments. Download the file yourself and pass a local path instead: ${path.slice(0, 120)}`
+            )
         }
 
         const localPath = resolve(path)
-
-        if (!existsSync(localPath)) {
-            const name = basename(path) || 'unknown'
-            throw SendError(`File not found: ${name}`)
-        }
-
-        const converted = await convertToCompatibleFormat(localPath)
-
-        if (converted.converted && this.debug) {
-            const originalFile = basename(localPath)
-            const convertedFile = basename(converted.path)
-            console.log(`[Format Conversion] ${originalFile} -> ${convertedFile}`)
-        }
-
-        return converted.path
-    }
-
-    private checkAbortSignal(signal?: AbortSignal): void {
-        if (signal?.aborted) {
-            throw SendError('Send cancelled')
+        try {
+            return inspectAttachment(localPath)
+        } catch (error) {
+            // Preserve the underlying cause (ENOENT/EACCES/EIO/…) so debuggers
+            // aren't misled into only checking whether the path exists.
+            const cause = error instanceof Error ? error : new Error(String(error))
+            throw SendError(`Attachment unreadable: ${basename(path) || 'unknown'}: ${cause.message}`, cause)
         }
     }
 
-    private async checkMessagesEnvironment(): Promise<void> {
-        const isAvailable = await checkMessagesApp()
+    private assertNotAborted(): void {
+        if (this.signal?.aborted) throw SendError('Send cancelled')
+    }
 
-        if (!isAvailable) {
+    private async assertMessagesAppRunning(): Promise<void> {
+        if (!(await this.messagesApp.isRunning())) {
             throw SendError('Messages app is not running')
         }
-    }
-
-    private async prepareAttachments(attachments: readonly string[], signal?: AbortSignal): Promise<string[]> {
-        if (attachments.length === 0) return []
-
-        if (this.debug) {
-            console.log(`[Processing Attachments] Total ${attachments.length} attachments`)
-        }
-
-        const resolvedPaths: string[] = []
-
-        for (let i = 0; i < attachments.length; i++) {
-            this.checkAbortSignal(signal)
-
-            const attachment = attachments[i]
-            if (attachment === undefined) continue
-
-            if (this.debug) {
-                const preview = attachment.length > 80 ? `${attachment.slice(0, 80)}...` : attachment
-                console.log(`[Processing Attachments] ${i + 1}/${attachments.length}: ${preview}`)
-            }
-
-            const resolved = await this.resolveAttachment(attachment, signal)
-            resolvedPaths.push(resolved)
-        }
-
-        return resolvedPaths
     }
 }

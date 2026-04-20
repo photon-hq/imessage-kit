@@ -5,53 +5,8 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { LIMITS } from '../src/config'
-import { IMessageError } from '../src/domain/errors'
 
 describe('Platform Utils', () => {
-    describe('validateRecipient', () => {
-        it('should validate phone numbers', async () => {
-            const { validateRecipient } = await import('../src/domain/validate')
-
-            expect(validateRecipient('+1234567890')).toBe('+1234567890')
-            expect(validateRecipient('+1 (234) 567-8900')).toBe('+1 (234) 567-8900')
-            expect(validateRecipient('1234567890')).toBe('1234567890')
-        })
-
-        it('should validate email addresses', async () => {
-            const { validateRecipient } = await import('../src/domain/validate')
-
-            expect(validateRecipient('user@example.com')).toBe('user@example.com')
-            expect(validateRecipient('test.user+tag@example.co.uk')).toBe('test.user+tag@example.co.uk')
-        })
-
-        it('should throw error for invalid recipients', async () => {
-            const { validateRecipient } = await import('../src/domain/validate')
-
-            expect(() => validateRecipient('')).toThrow('Recipient cannot be empty')
-            expect(() => validateRecipient('   ')).toThrow('Invalid recipient format')
-            expect(() => validateRecipient('invalid')).toThrow('Invalid recipient format')
-            expect(() => validateRecipient('@invalid')).toThrow('Invalid recipient format')
-            expect(() => validateRecipient('invalid')).toThrow(IMessageError)
-        })
-
-        it('should reject recipient strings over max length', async () => {
-            const { validateRecipient } = await import('../src/domain/validate')
-
-            const tooLong = 'a'.repeat(LIMITS.maxRecipientLength + 1)
-            expect(() => validateRecipient(tooLong)).toThrow(/Recipient exceeds maximum length/)
-            expect(() => validateRecipient(tooLong)).toThrow(IMessageError)
-        })
-
-        it('should reject whitespace-padded recipients (no trimming)', async () => {
-            const { validateRecipient } = await import('../src/domain/validate')
-
-            // The new validate does not trim — whitespace-padded strings are invalid
-            expect(() => validateRecipient('  user@example.com  ')).toThrow('Invalid recipient format')
-            expect(() => validateRecipient('\n+1234567890\t')).toThrow('Invalid recipient format')
-        })
-    })
-
     describe('isURL', () => {
         it('should validate HTTP(S) URLs', async () => {
             const { isURL } = await import('../src/domain/validate')
@@ -97,11 +52,9 @@ describe('Common Utils', () => {
     })
 
     describe('retry', () => {
-        it('should treat attempts below 1 as a single attempt', async () => {
+        it('treats attempts < 1 as exactly one attempt', async () => {
             const { retry } = await import('../src/utils/async')
-
             let calls = 0
-
             await expect(
                 retry(
                     async () => {
@@ -111,8 +64,125 @@ describe('Common Utils', () => {
                     { attempts: 0 }
                 )
             ).rejects.toThrow('boom')
-
             expect(calls).toBe(1)
+        })
+
+        it('returns the first successful result without extra attempts', async () => {
+            const { retry } = await import('../src/utils/async')
+            let calls = 0
+            const out = await retry(
+                async () => {
+                    calls++
+                    if (calls < 3) throw new Error('flaky')
+                    return 'ok'
+                },
+                { attempts: 5, delay: 1, backoff: false }
+            )
+            expect(out).toBe('ok')
+            expect(calls).toBe(3)
+        })
+
+        it('throws the LAST error after exhausting attempts', async () => {
+            const { retry } = await import('../src/utils/async')
+            let i = 0
+            await expect(
+                retry(
+                    async () => {
+                        i++
+                        throw new Error(`err-${i}`)
+                    },
+                    { attempts: 3, delay: 1, backoff: false }
+                )
+            ).rejects.toThrow('err-3')
+        })
+
+        it('with backoff=true, total elapsed grows roughly geometrically (sanity)', async () => {
+            const { retry } = await import('../src/utils/async')
+            const start = Date.now()
+            await retry(
+                async () => {
+                    throw new Error('x')
+                },
+                { attempts: 3, delay: 40, backoff: true }
+            ).catch(() => {})
+            // Two sleeps (between attempts) jittered in [0, 40] + [0, 80]. Lower
+            // bound is 0, upper is ~120ms + some scheduler slack. The only
+            // reliable assertion here is "reasonably bounded".
+            expect(Date.now() - start).toBeLessThan(500)
+        })
+
+        it('caps the delay at maxDelay even when the exponential backoff exceeds it', async () => {
+            const { retry } = await import('../src/utils/async')
+            const originalRandom = Math.random
+            Math.random = () => 1 // Always take the full jittered delay.
+            try {
+                const start = Date.now()
+                await retry(
+                    async () => {
+                        throw new Error('x')
+                    },
+                    { attempts: 4, delay: 50, backoff: true, maxDelay: 30 }
+                ).catch(() => {})
+                // 3 sleeps, each capped to maxDelay(=30) when exponential (50,100,200) > cap.
+                // `maxDelay = max(baseDelay, maxDelayOption)` → effective cap is max(50,30)=50,
+                // so each actual sleep is at most 50ms — total < ~180ms with slack.
+                expect(Date.now() - start).toBeLessThan(350)
+            } finally {
+                Math.random = originalRandom
+            }
+        })
+
+        it('throws the signal reason when aborted before the first attempt runs', async () => {
+            const { retry } = await import('../src/utils/async')
+            const ac = new AbortController()
+            ac.abort(new Error('pre-aborted'))
+            let calls = 0
+            await expect(
+                retry(
+                    async () => {
+                        calls++
+                        return 'ok'
+                    },
+                    { signal: ac.signal }
+                )
+            ).rejects.toThrow('pre-aborted')
+            expect(calls).toBe(0)
+        })
+
+        it('aborts between attempts and surfaces the abort reason (not the fn error)', async () => {
+            const { retry } = await import('../src/utils/async')
+            const ac = new AbortController()
+            let calls = 0
+            const p = retry(
+                async () => {
+                    calls++
+                    if (calls === 1) queueMicrotask(() => ac.abort(new Error('cancelled')))
+                    throw new Error('fn failed')
+                },
+                { attempts: 5, delay: 20, signal: ac.signal }
+            )
+            await expect(p).rejects.toThrow('cancelled')
+            expect(calls).toBeLessThan(5)
+        })
+    })
+
+    describe('delay — abort signal', () => {
+        it('rejects immediately when the signal is already aborted', async () => {
+            const { delay } = await import('../src/utils/async')
+            const ac = new AbortController()
+            ac.abort(new Error('no waiting'))
+            await expect(delay(1_000, ac.signal)).rejects.toThrow('no waiting')
+        })
+
+        it('rejects when the signal fires mid-sleep and does not fire the timer', async () => {
+            const { delay } = await import('../src/utils/async')
+            const ac = new AbortController()
+            const p = delay(1_000, ac.signal)
+            setTimeout(() => ac.abort(new Error('interrupted')), 20)
+            const start = Date.now()
+            await expect(p).rejects.toThrow('interrupted')
+            // Far below the 1s delay — proves the timer was cleared.
+            expect(Date.now() - start).toBeLessThan(300)
         })
     })
 
@@ -120,25 +190,19 @@ describe('Common Utils', () => {
         it('should accept text only', async () => {
             const { validateMessageContent } = await import('../src/domain/validate')
 
-            const result = validateMessageContent('Hello', undefined)
-            expect(result.hasText).toBe(true)
-            expect(result.hasAttachments).toBe(false)
+            expect(() => validateMessageContent('Hello', undefined)).not.toThrow()
         })
 
         it('should accept attachments only', async () => {
             const { validateMessageContent } = await import('../src/domain/validate')
 
-            const result = validateMessageContent(undefined, ['/path/to/file.jpg'])
-            expect(result.hasText).toBe(false)
-            expect(result.hasAttachments).toBe(true)
+            expect(() => validateMessageContent(undefined, ['/path/to/file.jpg'])).not.toThrow()
         })
 
         it('should accept both text and attachments', async () => {
             const { validateMessageContent } = await import('../src/domain/validate')
 
-            const result = validateMessageContent('Hello', ['/path/to/file.jpg'])
-            expect(result.hasText).toBe(true)
-            expect(result.hasAttachments).toBe(true)
+            expect(() => validateMessageContent('Hello', ['/path/to/file.jpg'])).not.toThrow()
         })
 
         it('should reject empty content', async () => {
@@ -150,36 +214,11 @@ describe('Common Utils', () => {
             expect(() => validateMessageContent('', [])).toThrow('Message must have text or at least one attachment')
         })
 
-        it('should handle whitespace-only text as having no text', async () => {
+        it('should treat whitespace-only text as valid content', async () => {
             const { validateMessageContent } = await import('../src/domain/validate')
 
-            // The new validateMessageContent checks `text !== ''` but does not trim.
-            // Whitespace-only text is considered valid text content.
-            const result = validateMessageContent('   ', undefined)
-            expect(result.hasText).toBe(true)
-            expect(result.hasAttachments).toBe(false)
-        })
-
-        it('should reject text exceeding max length', async () => {
-            const { validateMessageContent } = await import('../src/domain/validate')
-
-            const longText = 'x'.repeat(LIMITS.maxTextLength + 1)
-            expect(() => validateMessageContent(longText, undefined)).toThrow('exceeds maximum length')
-        })
-
-        it('should reject attachments exceeding max count', async () => {
-            const { validateMessageContent } = await import('../src/domain/validate')
-
-            const paths = Array.from({ length: LIMITS.maxAttachmentsPerMessage + 1 }, (_, i) => `/f${i}`)
-            expect(() => validateMessageContent(undefined, paths)).toThrow('Too many attachments')
-        })
-
-        it('should accept attachments at the limit', async () => {
-            const { validateMessageContent } = await import('../src/domain/validate')
-
-            const paths = Array.from({ length: LIMITS.maxAttachmentsPerMessage }, (_, i) => `/f${i}`)
-            const result = validateMessageContent(undefined, paths)
-            expect(result.hasAttachments).toBe(true)
+            // validateMessageContent checks `text !== ''` but does not trim.
+            expect(() => validateMessageContent('   ', undefined)).not.toThrow()
         })
     })
 })

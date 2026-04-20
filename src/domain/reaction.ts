@@ -3,6 +3,8 @@
  *
  * Reaction codes (`associated_message_type`):
  *
+ *   0, 2, 3     app / balloon marker (Polls, msgine, etc.) — NOT a reaction;
+ *               `resolveReactionMeta` intentionally returns `{kind: null}`.
  *   1000        sticker placement
  *   2000–2007   add reaction (love, like, dislike, laugh, emphasize, question, emoji, sticker)
  *   3000–3007   remove reaction (base = code − 1000)
@@ -52,7 +54,7 @@ export interface Reaction {
 // -----------------------------------------------
 
 /** Maps protocol `associated_message_type` base codes to reaction kinds. */
-export const REACTION_KIND_MAP: Readonly<Record<number, ReactionKind>> = {
+const REACTION_KIND_MAP: Readonly<Record<number, ReactionKind>> = {
     2000: 'love',
     2001: 'like',
     2002: 'dislike',
@@ -74,7 +76,7 @@ const STANDALONE_REACTION_MAP: Readonly<Record<number, ReactionKind>> = {
 // -----------------------------------------------
 
 /** Parsed reaction metadata. */
-export interface ReactionMeta {
+interface ReactionMeta {
     readonly kind: ReactionKind | null
     readonly isRemoved: boolean
 }
@@ -102,8 +104,5 @@ export function resolveReactionMeta(type: number | null): ReactionMeta {
     const baseType = isRemove ? type - 1000 : type
     const kind = REACTION_KIND_MAP[baseType] ?? null
 
-    return {
-        kind,
-        isRemoved: kind != null && isRemove,
-    }
+    return { kind, isRemoved: isRemove }
 }

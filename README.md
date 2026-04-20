@@ -24,21 +24,16 @@ A full-featured iMessage SDK for **reading**, **sending**, and **automating** iM
 
 | Feature | Method | Example |
 |---------|--------|---------|
-| [Send Messages](#send-messages) | `sdk.send()` | [01-send-text.ts](./examples/01-send-text.ts) |
-| [Send Images](#send-images) | `sdk.send()` | [02-send-image.ts](./examples/02-send-image.ts) |
-| [Send Files](#send-files) | `sdk.sendFile()` | [03-send-file.ts](./examples/03-send-file.ts) |
-| [Send to Groups](#send-to-groups) | `sdk.send()` | [04-send-group.ts](./examples/04-send-group.ts) |
+| [Send Text](#send-messages) | `sdk.send()` | [01-send-text.ts](./examples/01-send-text.ts) |
+| [Send Image](#send-attachments) | `sdk.send()` | [02-send-image.ts](./examples/02-send-image.ts) |
+| [Send File](#send-attachments) | `sdk.send()` | [03-send-file.ts](./examples/03-send-file.ts) |
+| [Send to Group](#send-to-groups) | `sdk.send()` | [04-send-group.ts](./examples/04-send-group.ts) |
 | [Query Messages](#query-messages) | `sdk.getMessages()` | [05-query-messages.ts](./examples/05-query-messages.ts) |
 | [List Chats](#list-chats) | `sdk.listChats()` | [06-list-chats.ts](./examples/06-list-chats.ts) |
 | [Real-time Watching](#real-time-watching) | `sdk.startWatching()` | [07-watch-messages.ts](./examples/07-watch-messages.ts) |
-| [Auto Reply](#auto-reply) | `sdk.message()` | [08-auto-reply.ts](./examples/08-auto-reply.ts) |
-| Batch Send | `sdk.sendBatch()` | [09-batch-send.ts](./examples/09-batch-send.ts) |
-| Get Sent Message | `sdk.send()` | [10-get-sent-message.ts](./examples/10-get-sent-message.ts) |
-| [Plugin System](#plugin-system) | `sdk.use()` | [11-plugin.ts](./examples/11-plugin.ts) |
-| [Error Handling](#error-handling) | `SendError` | [12-error-handling.ts](./examples/12-error-handling.ts) |
-| Watch Own Messages | `sdk.startWatching()` | [13-watch-own-messages.ts](./examples/13-watch-own-messages.ts) |
-| [Scheduled Messages](#scheduled-messages) | `MessageScheduler` | [14-scheduled-messages.ts](./examples/14-scheduled-messages.ts) |
-| [Smart Reminders](#smart-reminders) | `Reminders` | [15-smart-reminders.ts](./examples/15-smart-reminders.ts) |
+| [Auto Reply](#auto-reply) | `onDirectMessage` → `sdk.send()` | [08-auto-reply.ts](./examples/08-auto-reply.ts) |
+| [Plugin System](#plugin-system) | `sdk.use()` | [10-plugin.ts](./examples/10-plugin.ts) |
+| [Error Handling](#error-handling) | `IMessageError` | [11-error-handling.ts](./examples/11-error-handling.ts) |
 
 ---
 
@@ -61,30 +56,55 @@ import { IMessageSDK } from '@photon-ai/imessage-kit'
 
 const sdk = new IMessageSDK()
 
-// Send a message
-await sdk.send('+1234567890', 'Hello from iMessage Kit!')
+// Send a text message
+await sdk.send({ to: '+1234567890', text: 'Hello from iMessage Kit!' })
 
-// Clean up
+// Or use async-dispose to guarantee teardown:
+await using disposable = new IMessageSDK()
+await disposable.send({ to: '+1234567890', text: 'Hi!' })
+
+// Manual teardown
 await sdk.close()
 ```
 
 ### Configuration
 
 ```typescript
+// Simplified; `readonly` modifiers omitted for readability — see src/types/config.ts
 interface IMessageConfig {
-    databasePath?: string              // Path to Messages SQLite database
-    maxConcurrentSends?: number        // Max concurrent sends (default: 5)
-    debug?: boolean                    // Enable verbose debug logging
-    plugins?: Plugin[]                 // Plugin list
+    databasePath?: string        // Path to Messages SQLite database (default: ~/Library/Messages/chat.db)
+    maxConcurrentSends?: number  // Concurrent send cap (default 10, range 1..50)
+    sendTimeout?: number         // ms per AppleScript invocation (default 30_000, range 1_000..300_000)
+    debug?: boolean              // Verbose SDK logs
+    plugins?: Plugin[]           // Plugins registered at construction; sdk.use() is also available later
 }
 ```
 
+Out-of-range numeric values **throw** `IMessageError(code: 'CONFIG')` at construction — they are not silently clamped. The accepted ranges are exposed as the `BOUNDS` constant exported from the package root.
+
 ### Granting Permission
 
-`IMessageKit` requires **Full Disk Access** to read your chat history and perform automation tasks.
+`IMessageKit` requires **Full Disk Access** to read `chat.db`.
 
 1. Open **System Settings → Privacy & Security → Full Disk Access**
 2. Click **"+"** and add your IDE or terminal (e.g., Cursor, VS Code, Terminal, Warp)
+
+---
+
+## Send vs Observe Semantics
+
+- `sdk.send(request)` returns `Promise<void>` that resolves when `osascript` exits successfully. It does **not** confirm the message landed in `chat.db`, nor does it return a `Message` object.
+- To correlate your send with a `chat.db` row (and observe delivery transitions), subscribe to `onFromMeMessage` via the watcher — it fires for every from-me row observed, whether authored by this SDK, another Apple client, or Messages.app.
+
+```typescript
+// Fire-and-forget send
+await sdk.send({ to: '+1234567890', text: 'Hi' })
+
+// Observe the landed row
+await sdk.startWatching({
+    onFromMeMessage: (msg) => console.log('Landed in chat.db:', msg.id, msg.isDelivered),
+})
+```
 
 ---
 
@@ -94,54 +114,60 @@ interface IMessageConfig {
 
 ### Send Messages
 
-```typescript
-// Send text
-await sdk.send('+1234567890', 'Hello World!')
+`sdk.send(request: SendRequest): Promise<void>`
 
-// Send to email
-await sdk.send('user@example.com', 'Hello!')
+```typescript
+// Simplified; `readonly` modifiers omitted for readability — see src/types/send.ts
+interface SendRequest {
+    to: string                  // phone, email, or chatId
+    text?: string
+    attachments?: string[]      // local absolute paths; remote URLs are rejected
+}
+
+// Text
+await sdk.send({ to: '+1234567890', text: 'Hello World!' })
+
+// Email recipient
+await sdk.send({ to: 'user@example.com', text: 'Hello!' })
 ```
 
 ### Send Attachments
 
 ```typescript
-// Send local files (images, PDFs, any file type)
-await sdk.send('+1234567890', {
-    attachments: ['image.jpg', 'document.pdf']
-})
+// Local file paths only — download remote URLs yourself first.
+await sdk.send({ to: '+1234567890', attachments: ['/abs/path/image.jpg'] })
 
-// Send network images (auto-download)
-await sdk.send('+1234567890', {
-    attachments: ['https://example.com/image.jpg']
+// Text + multiple attachments — non-transactional: the first osascript call
+// bundles text + attachments[0]; each later attachment is its own call with
+// a ~500ms inter-step pacing. A mid-batch failure is labelled
+// "attachment N/total".
+await sdk.send({
+    to: '+1234567890',
+    text: 'Check this out',
+    attachments: ['/abs/path/photo.jpg', '/abs/path/report.pdf']
 })
-
-// Text with attachments
-await sdk.send('+1234567890', {
-    text: 'Check this out!',
-    attachments: ['photo.jpg', 'report.pdf']
-})
-
-// Convenience methods
-await sdk.sendFile('+1234567890', '/path/to/document.pdf')
-await sdk.sendFiles('+1234567890', ['file1.pdf', 'file2.csv'], 'Multiple files')
 ```
 
 ### Query Messages
 
 ```typescript
-// Get messages with filters
-const result = await sdk.getMessages({
+const messages = await sdk.getMessages({
+    chatId: 'any;+;chat534ce85d...',   // optional — scopes to one conversation
     participant: '+1234567890',
-    unreadOnly: true,
-    limit: 20,
+    service: 'iMessage',                // 'iMessage' | 'SMS' | 'RCS'
+    isFromMe: false,                    // tri-state: omit → both
+    isRead: false,                      // tri-state: omit → both
+    hasAttachments: true,               // tri-state: omit → both
+    excludeReactions: true,             // drop tapback/sticker rows
     since: new Date('2025-01-01'),
-    search: 'meeting'
+    before: new Date('2025-02-01'),
+    search: 'meeting',                  // app-layer substring over decoded text
+    limit: 20,
+    offset: 0,
 })
-
-// Get unread messages
-const unread = await sdk.getMessages({ unreadOnly: true })
-console.log(`${unread.length} unread messages`)
 ```
+
+`search` runs in application layer over decoded `attributedBody` — there is no SQL `LIKE` index. Narrow with `chatId` / `participant` / `since` / `limit` on large databases.
 
 ---
 
@@ -152,76 +178,88 @@ console.log(`${unread.length} unread messages`)
 ### List Chats
 
 ```typescript
-// Get all chats
-const all = await sdk.listChats()
-
-// Filter chats
-const groups = await sdk.listChats({
-    kind: 'group',
+const chats = await sdk.listChats({
+    chatId: 'any;+;chat...',   // optional — scope to one chat
+    kind: 'group',              // 'group' | 'dm'
+    service: 'iMessage',
+    isArchived: false,
     hasUnread: true,
-    sortBy: 'recent',
-    search: 'Project',
-    limit: 20
+    sortBy: 'recent',           // 'recent' | 'name'
+    search: 'Project',          // LIKE over display_name / chat_identifier (escaped)
+    limit: 20,
+    offset: 0,
 })
 
-// Each chat includes
-for (const chat of groups) {
+for (const chat of chats) {
     console.log({
         chatId: chat.chatId,
         name: chat.name,
         kind: chat.kind,
-        unread: chat.unreadCount
+        unread: chat.unreadCount,
+        lastMessageAt: chat.lastMessageAt,
     })
 }
 ```
 
 ### Send to Groups
 
-```typescript
-// Get group chatId from listChats()
-const groups = await sdk.listChats({ kind: 'group' })
-const chatId = groups[0].chatId  // e.g., 'chat45e2b868...'
+Never hand-write a group `chatId`. Always use one surfaced by the SDK.
 
-// Send to group
-await sdk.send(chatId, 'Hello group!')
-await sdk.send(chatId, {
-    text: 'Check these files',
-    attachments: ['report.pdf']
+```typescript
+// From listChats
+const groups = await sdk.listChats({ kind: 'group' })
+await sdk.send({ to: groups[0].chatId, text: 'Hello group!' })
+
+// From the watcher
+await sdk.startWatching({
+    onGroupMessage: async (msg) => {
+        if (msg.chatId) await sdk.send({ to: msg.chatId, text: 'ack' })
+    }
 })
+```
+
+### ChatId Formats
+
+| Format | Example | Used for |
+|--------|---------|----------|
+| DM bare address | `+1234567890` / `user@example.com` | DM routing; SDK prefixes internally |
+| DM prefixed | `iMessage;-;+1234567890` | Canonical DM chatId |
+| Group (macOS 26+) | `any;+;chat534ce85d...` | Group chat (current) |
+| Group (legacy) | `iMessage;+;chat534ce85d...` | Pre-macOS-26 group chat |
+| Group (bare GUID) | `chat45e2b868...` | Accepted as input; SDK prefixes internally |
+
+Parse / validate directly via the exported value object when needed:
+
+```typescript
+import { ChatId, resolveTarget } from '@photon-ai/imessage-kit'
+
+const cid = ChatId.fromUserInput('iMessage;-;pilot@photon.codes')
+cid.isGroup            // false
+cid.coreIdentifier     // 'pilot@photon.codes'
+
+const target = resolveTarget('+1234567890')   // MessageTarget (dm | group)
 ```
 
 ---
 
 ## Real-time Events
 
-> Examples: [07-watch-messages.ts](./examples/07-watch-messages.ts) | [08-auto-reply.ts](./examples/08-auto-reply.ts) | [13-watch-own-messages.ts](./examples/13-watch-own-messages.ts)
+> Examples: [07-watch-messages.ts](./examples/07-watch-messages.ts) | [08-auto-reply.ts](./examples/08-auto-reply.ts) | [09-get-sent-message.ts](./examples/09-get-sent-message.ts)
 
 ### Real-time Watching
 
+`sdk.startWatching(events)` accepts five callbacks. Calling it while a watcher is already running throws `IMessageError(code: 'CONFIG', message: 'Watcher is already running')` — stop it first.
+
 ```typescript
 await sdk.startWatching({
-    // All messages
-    onMessage: (msg) => {
-        console.log(`New: ${msg.text}`)
-    },
-    
-    // DMs only
-    onDirectMessage: (msg) => {
-        console.log(`DM from ${msg.participant}`)
-    },
-    
-    // Groups only
-    onGroupMessage: (msg) => {
-        console.log(`Group: ${msg.chatId}`)
-    },
-    
-    onError: (error) => {
-        console.error(error)
-    }
+    onIncomingMessage: (msg) => { /* every incoming (non-from-me) row */ },
+    onDirectMessage:   (msg) => { /* incoming DMs only */ },
+    onGroupMessage:    (msg) => { /* incoming group messages only */ },
+    onFromMeMessage:   (msg) => { /* any from-me row — this SDK or another client */ },
+    onError:           (err) => { /* dispatch errors */ },
 })
 
-// Stop watching
-sdk.stopWatching()
+await sdk.stopWatching()   // safe to call even if never started
 ```
 
 ### Auto Reply
@@ -229,26 +267,11 @@ sdk.stopWatching()
 ```typescript
 await sdk.startWatching({
     onDirectMessage: async (msg) => {
-        await sdk.message(msg)
-            .ifFromOthers()
-            .matchText(/hello/i)
-            .replyText('Hi there!')
-            .execute()
+        if (!msg.text || !/hello/i.test(msg.text)) return
+        if (!msg.chatId) return   // rare WAL race before chat_message_join flushes
+        await sdk.send({ to: msg.chatId, text: 'Hi there!' })
     }
 })
-```
-
-### Message Chain API
-
-```typescript
-await sdk.message(msg)
-    .ifUnread()
-    .ifNotReaction()   // Skip tapback reactions
-    .ifGroup()
-    .when(m => (m.participant ?? '').startsWith('+1'))
-    .matchText(/photo/i)
-    .replyAttachments(['photo.jpg'])
-    .execute()
 ```
 
 ---
@@ -259,207 +282,133 @@ await sdk.message(msg)
 
 ### Attachment Helpers
 
+Only iMessage-specific helpers are exported. For copy / read / stat, use `node:fs` directly against `attachment.localPath`.
+
 ```typescript
 import {
     attachmentExists,
-    copyAttachmentFile,
-    getAttachmentFileInfo,
-    getAttachmentSize,
+    getAttachmentExtension,
     isImageAttachment,
     isVideoAttachment,
-    isAudioAttachment
+    isAudioAttachment,
 } from '@photon-ai/imessage-kit'
 
-const messages = await sdk.getMessages({ hasAttachments: true, limit: 1 })
-const attachment = messages[0].attachments[0]
+const [msg] = await sdk.getMessages({ hasAttachments: true, limit: 1 })
+const attachment = msg?.attachments[0]
 
-if (await attachmentExists(attachment)) {
-    const size = await getAttachmentSize(attachment)
-    const info = await getAttachmentFileInfo(attachment)
-    
+if (attachment && await attachmentExists(attachment)) {
     if (isImageAttachment(attachment)) {
-        await copyAttachmentFile(attachment, '/path/to/save.jpg')
+        const ext = getAttachmentExtension(attachment)   // lowercase, no leading dot — e.g. 'jpg'
+        // Use node:fs for anything further (copyFile, createReadStream, stat, …)
     }
 }
 ```
-
-### Supported File Types
-
-- **Documents**: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, RTF
-- **Images**: JPG, PNG, GIF, HEIC, WEBP, AVIF
-- **Contact Cards**: VCF (vCard)
-- **Data Files**: CSV, JSON, XML
-- **Archives**: ZIP, RAR, 7Z
-- **Media**: MP4, MOV, MP3, M4A
-
----
-
-## Scheduling
-
-> Examples: [14-scheduled-messages.ts](./examples/14-scheduled-messages.ts) | [15-smart-reminders.ts](./examples/15-smart-reminders.ts)
-
-### Scheduled Messages
-
-```typescript
-import { IMessageSDK, MessageScheduler } from '@photon-ai/imessage-kit'
-
-const sdk = new IMessageSDK()
-const scheduler = new MessageScheduler({
-    sender: sdk,
-    debug: true,
-    events: {
-        onSent: (task, result) => console.log(`Sent: ${task.id}`),
-        onError: (task, error) => console.error(`Failed: ${error.message}`),
-        onComplete: (task) => console.log(`Completed: ${task.id}`)
-    }
-})
-
-scheduler.start()
-
-// One-time message
-const id = scheduler.schedule({
-    to: '+1234567890',
-    content: 'Reminder!',
-    sendAt: new Date(Date.now() + 5 * 60_000)
-})
-
-// Recurring daily
-scheduler.scheduleRecurring({
-    to: '+1234567890',
-    content: 'Good morning!',
-    startAt: new Date('2025-01-01T08:00:00'),
-    interval: 'daily',  // 'hourly' | 'daily' | 'weekly' | 'monthly' | number (ms)
-    endAt: new Date('2025-12-31')
-})
-
-// Manage
-scheduler.reschedule(id, newDate)
-scheduler.cancel(id)
-scheduler.getPending()
-
-// Cleanup
-scheduler.destroy()
-```
-
-### Smart Reminders
-
-A human-friendly wrapper for scheduling with natural language:
-
-```typescript
-import { IMessageSDK, Reminders } from '@photon-ai/imessage-kit'
-
-const sdk = new IMessageSDK()
-const reminders = new Reminders(sdk)
-
-// Relative time
-reminders.in('5 minutes', '+1234567890', 'Take a break!')
-reminders.in('2 hours', '+1234567890', 'Call the client')
-reminders.in('1 day', '+1234567890', 'Follow up')
-
-// Specific time
-reminders.at('5pm', '+1234567890', 'End of day review')
-reminders.at('tomorrow 9am', '+1234567890', 'Morning standup')
-reminders.at('friday 2pm', '+1234567890', 'Weekly sync')
-
-// Exact date
-reminders.exact(new Date('2025-12-25T10:00:00'), '+1234567890', 'Merry Christmas!')
-
-// Manage
-reminders.list()    // List pending
-reminders.count()   // Count pending
-reminders.cancel(id)
-reminders.destroy()
-```
-
-**Supported formats:**
-- Duration: `"5 minutes"`, `"2 hours"`, `"1 day"`, `"30 seconds"`, `"1 week"`
-- Time: `"5pm"`, `"5:30pm"`, `"17:30"`
-- Day + Time: `"tomorrow 9am"`, `"friday 2pm"`
 
 ---
 
 ## Plugin System
 
-> Example: [11-plugin.ts](./examples/11-plugin.ts)
+> Example: [10-plugin.ts](./examples/10-plugin.ts) · reference logger: [logger-plugin.ts](./examples/logger-plugin.ts)
+
+`sdk.use(plugin)` can be called before or after `sdk` is initialized — late registrations are joined to the pipeline on the next hook. Plugins are torn down on `sdk.close()`.
 
 ```typescript
-import { loggerPlugin } from '@photon-ai/imessage-kit'
+import { definePlugin } from '@photon-ai/imessage-kit'
 
-// Built-in logger
-sdk.use(loggerPlugin({
-    level: 'info',
-    colors: true
-}))
-
-// Custom plugin
-sdk.use({
-    name: 'my-plugin',
-    onInit: async () => console.log('Initialized'),
-    onBeforeSend: async ({ request }) => {
-        console.log('Sending to:', request.to)
+const audit = definePlugin({
+    name: 'audit',
+    version: '1.0.0',
+    onBeforeSend: ({ request }) => {
+        // Throw here to veto the send; cause is attached to IMessageError(SEND).
+        if (request.text?.includes('forbidden')) throw new Error('blocked by policy')
     },
-    onAfterSend: async ({ result }) => {
-        console.log('Sent:', result)
+    onAfterSend: ({ request }) => {
+        console.log('[audit] dispatched to', request.to)
     },
-    onDestroy: async () => console.log('Destroyed')
 })
+
+sdk.use(audit)
 ```
+
+### Hook contract
+
+All 11 hooks, grouped by dispatch mode:
+
+| Hook | Mode | Behaviour on throw |
+|------|------|--------------------|
+| `onInit` | sequential | Routed to `onError` |
+| `onDestroy` | sequential | Routed to `onError` |
+| `onError` | sequential | Logged once; not re-routed (prevents recursion) |
+| `onBeforeMessageQuery` | **interrupting** | Aborts `getMessages` with `IMessageError(DATABASE)` |
+| `onBeforeChatQuery` | **interrupting** | Aborts `listChats` with `IMessageError(DATABASE)` |
+| `onBeforeSend` | **interrupting** | Aborts `send` with `IMessageError(SEND)` — use as auth/policy gate |
+| `onAfterMessageQuery` | parallel | Routed to `onError` |
+| `onAfterChatQuery` | parallel | Routed to `onError` |
+| `onAfterSend` | parallel | Fires only on successful AppleScript dispatch |
+| `onIncomingMessage` | parallel | Every incoming row observed by the watcher |
+| `onFromMe` | parallel | Every from-me row observed — authoritative DB-arrival signal |
+
+> **Naming quirk.** The same from-me event surfaces as `DispatchEvents.onFromMeMessage` (user callback passed to `startWatching`) and `PluginHooks.onFromMe` (plugin entry point). They are intentionally distinct to mark the "inline handler" vs "plugin observer" boundary.
 
 ---
 
 ## Error Handling
 
-> Example: [12-error-handling.ts](./examples/12-error-handling.ts)
+> Example: [11-error-handling.ts](./examples/11-error-handling.ts)
+
+All SDK failures surface as `IMessageError` with a typed `code`.
 
 ```typescript
 import { IMessageError } from '@photon-ai/imessage-kit'
 
 try {
-    await sdk.send('+1234567890', 'Hello')
+    await sdk.send({ to: '+1234567890', text: 'Hello' })
 } catch (error) {
     if (error instanceof IMessageError) {
         // error.code: 'PLATFORM' | 'DATABASE' | 'SEND' | 'CONFIG'
+        // error.cause: original thrown Error (when applicable)
         console.error(`[${error.code}] ${error.message}`)
     }
 }
 ```
 
+`IMessageError` codes map to failure classes:
+- `PLATFORM` — non-darwin runtime, or missing `$HOME` (only raised by `requireMacOS()` / `getDefaultDatabasePath()`)
+- `DATABASE` — SQLite open failure, query errors, decoder issues, or `onBeforeMessageQuery` / `onBeforeChatQuery` plugin veto
+- `SEND` — AppleScript dispatch failure, `osascript` non-zero exit, Messages.app not running, attachment unreadable, send cancellation, or `onBeforeSend` plugin veto
+- `CONFIG` — out-of-bounds config, malformed chatId, SDK already destroyed, watcher already running, duplicate plugin name
+
 ---
 
 ## Examples
 
-Run any example with Bun:
+Run any example with Bun (requires macOS and Full Disk Access):
 
 ```bash
-bun run examples/<filename>.ts
+bun run examples/01-send-text.ts
 ```
 
 ### Getting Started
-- [01-send-text.ts](./examples/01-send-text.ts) - Basic text message
-- [02-send-image.ts](./examples/02-send-image.ts) - Send images
-- [03-send-file.ts](./examples/03-send-file.ts) - Send files
+- [01-send-text.ts](./examples/01-send-text.ts) — basic text message
+- [02-send-image.ts](./examples/02-send-image.ts) — send an image attachment
+- [03-send-file.ts](./examples/03-send-file.ts) — send an arbitrary file
 
 ### Message Operations
-- [05-query-messages.ts](./examples/05-query-messages.ts) - Query messages
-- [09-batch-send.ts](./examples/09-batch-send.ts) - Batch sending
-- [10-get-sent-message.ts](./examples/10-get-sent-message.ts) - Get sent message
+- [05-query-messages.ts](./examples/05-query-messages.ts) — filter history
+- [09-get-sent-message.ts](./examples/09-get-sent-message.ts) — correlate a send with its chat.db row
 
 ### Chats & Groups
-- [04-send-group.ts](./examples/04-send-group.ts) - Send to group
-- [06-list-chats.ts](./examples/06-list-chats.ts) - List chats
+- [04-send-group.ts](./examples/04-send-group.ts) — send to a group
+- [06-list-chats.ts](./examples/06-list-chats.ts) — list conversations
 
 ### Real-time & Automation
-- [07-watch-messages.ts](./examples/07-watch-messages.ts) - Watch messages
-- [08-auto-reply.ts](./examples/08-auto-reply.ts) - Auto-reply bot
-- [13-watch-own-messages.ts](./examples/13-watch-own-messages.ts) - Watch own messages
-
-### Scheduling
-- [14-scheduled-messages.ts](./examples/14-scheduled-messages.ts) - Scheduled messages
-- [15-smart-reminders.ts](./examples/15-smart-reminders.ts) - Smart reminders
+- [07-watch-messages.ts](./examples/07-watch-messages.ts) — watcher lifecycle
+- [08-auto-reply.ts](./examples/08-auto-reply.ts) — auto-reply bot
 
 ### Advanced
-- [11-plugin.ts](./examples/11-plugin.ts) - Custom plugin
-- [12-error-handling.ts](./examples/12-error-handling.ts) - Error handling
+- [10-plugin.ts](./examples/10-plugin.ts) — custom plugin
+- [11-error-handling.ts](./examples/11-error-handling.ts) — `IMessageError` handling
+- [logger-plugin.ts](./examples/logger-plugin.ts) — a reference logger plugin to adapt
 
 ---
 
@@ -469,17 +418,15 @@ bun run examples/<filename>.ts
 
 | Method | Description |
 |--------|-------------|
-| `getMessages(filter?)` | Query messages with filters |
-| `listChats(options?)` | List chats with filtering/sorting |
-| `send(to, content)` | Send text, images, and/or files |
-| `sendFile(to, path, text?)` | Send a single file |
-| `sendFiles(to, paths, text?)` | Send multiple files |
-| `sendBatch(items, options?)` | Send multiple messages with controlled concurrency |
-| `message(msg)` | Create message processing chain |
-| `startWatching(events?)` | Start monitoring new messages |
-| `stopWatching()` | Stop monitoring |
-| `use(plugin)` | Register plugin |
-| `close()` | Close SDK and release resources |
+| `new IMessageSDK(config?)` | Construct the SDK (sync). Opens the DB lazily. |
+| `sdk.use(plugin)` | Register a plugin; valid before or after init. |
+| `sdk.getMessages(query?)` | Query historical messages. Returns `Message[]`. |
+| `sdk.listChats(query?)` | Query chat summaries. Returns `Chat[]`. |
+| `sdk.send(request)` | Dispatch a send via AppleScript. Resolves on `osascript` exit. |
+| `sdk.startWatching(events)` | Begin WAL-based real-time watching. Throws `IMessageError(CONFIG)` if a watcher is already live. |
+| `sdk.stopWatching()` | Stop the watcher. Safe when never started. |
+| `sdk.close()` | Tear down watcher, plugins, and DB. Concurrent callers share the in-flight teardown; teardown failures surface as `AggregateError`. |
+| `await using sdk = new IMessageSDK()` | `Symbol.asyncDispose` integration — auto-close on scope exit. |
 
 ### Types
 
@@ -489,24 +436,26 @@ interface Message {
     id: string
     text: string | null
     participant: string | null
-    chatId: string
+    chatId: string | null
     chatKind: 'dm' | 'group' | 'unknown'
+    service: 'iMessage' | 'SMS' | 'RCS' | null
+    kind: 'text' | 'memberAdded' | 'memberRemoved' | 'nameChanged' | 'groupAction' | 'unknown'
     isFromMe: boolean
     isRead: boolean
-    service: 'iMessage' | 'SMS' | 'RCS' | 'unknown'
+    isSent: boolean
+    isDelivered: boolean
+    createdAt: Date
+    deliveredAt: Date | null
+    readAt: Date | null
+    editedAt: Date | null
+    retractedAt: Date | null
     reaction: Reaction | null
     attachments: Attachment[]
-    createdAt: Date
-}
-
-interface SendResult {
-    chatId: string
-    to: string
-    service: Service
-    sentAt: Date
-    message?: Message  // Present when watcher confirms delivery
+    // ...plus ~30 additional fields; see src/domain/message.ts for the full interface
 }
 ```
+
+Full types — `Message`, `Chat`, `Attachment`, `Reaction`, `SendRequest`, `MessageQuery`, `ChatQuery`, `Plugin`, `PluginHooks`, `DispatchEvents`, `MessageTarget` — are exported from the package root. See `llms.txt` for the condensed reference.
 
 ---
 

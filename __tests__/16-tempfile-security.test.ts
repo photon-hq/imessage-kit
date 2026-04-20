@@ -1,107 +1,133 @@
 /**
- * Temp File Security Tests
+ * TempFileManager — symlink / TOCTOU behaviour.
  *
- * Tests for Issue #31: Symlink/TOCTOU attack prevention
+ * This module sweeps expired entries under `~/Pictures/imsg_temp_*`. The
+ * security-sensitive property is that cleanup never follows a symlink to
+ * stat or unlink its target — otherwise an attacker who can plant entries
+ * in that directory could coerce the SDK process into deleting arbitrary
+ * user files.
+ *
+ * The manager hard-codes `join(homedir(), 'Pictures')` at module-load
+ * time, so a mid-run mock of `homedir()` is too late. These tests use the
+ * real directory and only touch entries with the `imsg_temp_` prefix
+ * (which is exclusively ours), isolated by a unique per-run suffix.
+ * Every planted entry is removed in `afterEach`, including on failure.
  */
 
-import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { buildSendScript } from '../src/infra/outgoing/applescript-transport'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import {
+    existsSync,
+    lutimesSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { TempFileManager } from '../src/infra/outgoing/temp-files'
 
-const generateSendAttachmentScript = (id: string, path: string) =>
-    buildSendScript({ method: 'buddy', identifier: id, attachmentPath: path })
-const generateSendAttachmentToChat = (id: string, path: string) =>
-    buildSendScript({ method: 'chat', identifier: id, attachmentPath: path })
+const PREFIX = 'imsg_temp_'
+const REAL_TEMP_DIR = join(homedir(), 'Pictures')
 
-describe('Security: Temp File Symlink/TOCTOU Protection', () => {
-    // ------------------------------------------------------------
-    // AppleScript: Atomic temp file creation
-    // ------------------------------------------------------------
-    describe('AppleScript sandbox bypass uses atomic mktemp', () => {
-        test('generateSendAttachmentScript should use mktemp for atomic creation', () => {
-            const { script } = generateSendAttachmentScript('user@example.com', '/tmp/test.jpg')
+// Unique per-run suffix so concurrent test runs can't collide.
+const RUN_ID = `test_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
-            // Must use mktemp for atomic file creation
-            expect(script).toContain('mktemp')
+// Track every path we plant so afterEach can sweep them even if a test throws.
+const planted: string[] = []
 
-            // Must NOT use predictable Date.now() pattern
-            expect(script).not.toMatch(/imsg_temp_\d+/)
+function plantEntry(name: string, create: (absPath: string) => void): string {
+    const abs = join(REAL_TEMP_DIR, `${PREFIX}${RUN_ID}_${name}`)
+    create(abs)
+    planted.push(abs)
+    return abs
+}
 
-            // Must NOT use cp command (can follow symlinks)
-            expect(script).not.toContain('"cp "')
+function backdate(path: string, mtimeMsAgo: number): void {
+    const now = Date.now() / 1000
+    const target = now - mtimeMsAgo / 1000
+    lutimesSync(path, target, target)
+}
 
-            // Must use cat for safe file copy
-            expect(script).toContain('cat ')
-
-            // Must set restrictive permissions
-            expect(script).toContain('chmod 600')
-        })
-
-        test('generateSendAttachmentToChat should use mktemp for atomic creation', () => {
-            const { script } = generateSendAttachmentToChat('iMessage;-;+1234567890', '/tmp/test.jpg')
-
-            expect(script).toContain('mktemp')
-            expect(script).not.toMatch(/imsg_temp_\d+/)
-            expect(script).not.toContain('"cp "')
-            expect(script).toContain('cat ')
-            expect(script).toContain('chmod 600')
-        })
+describe('TempFileManager — symlink / TOCTOU guard', () => {
+    beforeEach(() => {
+        if (!existsSync(REAL_TEMP_DIR)) mkdirSync(REAL_TEMP_DIR, { recursive: true })
     })
 
-    // ------------------------------------------------------------
-    // TempFileManager: Symlink-safe cleanup
-    // ------------------------------------------------------------
-    describe('TempFileManager uses lstatSync for symlink detection', () => {
-        test('temp-file-manager.ts should use lstatSync instead of statSync', () => {
-            const source = readFileSync(new URL('../src/infra/outgoing/temp-files.ts', import.meta.url), 'utf-8')
-
-            // Must import and use lstatSync (does not follow symlinks)
-            expect(source).toContain('lstatSync')
-            expect(source).toMatch(/lstatSync\(filePath\)/)
-
-            // Must NOT import statSync (follows symlinks)
-            // Note: We check the import line specifically since lstatSync contains 'statSync'
-            expect(source).not.toMatch(/import.*\bstatSync\b/)
-        })
-
-        test('cleanup should check for non-regular files before unlinking', () => {
-            const source = readFileSync(new URL('../src/infra/outgoing/temp-files.ts', import.meta.url), 'utf-8')
-
-            // Must check isFile() before deleting (catches symlinks, dirs, devices, etc.)
-            expect(source).toContain('isFile()')
-
-            // Must use lstatSync (already verified in previous test)
-            expect(source).toContain('lstatSync')
-        })
+    afterEach(() => {
+        while (planted.length > 0) {
+            const p = planted.pop()!
+            try {
+                rmSync(p, { recursive: true, force: true })
+            } catch {}
+        }
     })
 
-    // ------------------------------------------------------------
-    // Download: Crypto-random filenames with exclusive writes
-    // ------------------------------------------------------------
-    describe('Download uses crypto-random filenames', () => {
-        test('outbound-attachments.ts should use randomBytes for unpredictable filenames', () => {
-            const source = readFileSync(new URL('../src/infra/outgoing/downloader.ts', import.meta.url), 'utf-8')
+    it('deletes the symlink entry itself, never the target file it points at', async () => {
+        // Sensitive target OUTSIDE Pictures — the file an attacker would
+        // hope to get unlinked if cleanup followed the link.
+        const sensitiveDir = mkdtempSync(join(tmpdir(), 'imessage-kit-sensitive-'))
+        const sensitiveTarget = join(sensitiveDir, 'important.txt')
+        writeFileSync(sensitiveTarget, 'precious')
 
-            // Must use crypto randomBytes
-            expect(source).toContain("import { randomBytes } from 'node:crypto'")
-            expect(source).toContain('randomBytes(8)')
+        try {
+            const plantedLink = plantEntry('symlink_attack', (p) => symlinkSync(sensitiveTarget, p))
+            backdate(plantedLink, 60 * 60 * 1_000) // 1h old — well past 10m
+
+            const manager = new TempFileManager({ maxAge: 10 * 60 * 1_000 })
+            manager.start()
+            await manager.destroy()
+
+            expect(existsSync(plantedLink)).toBe(false)
+            // Target must survive with contents intact.
+            expect(existsSync(sensitiveTarget)).toBe(true)
+            expect(readFileSync(sensitiveTarget, 'utf8')).toBe('precious')
+        } finally {
+            rmSync(sensitiveDir, { recursive: true, force: true })
+        }
+    })
+
+    it('keeps fresh temp entries (mtime within maxAge) and deletes only expired ones', async () => {
+        const fresh = plantEntry('fresh_dir', (p) => {
+            mkdirSync(p)
+            writeFileSync(join(p, 'payload'), 'fresh')
         })
-
-        test('outbound-attachments.ts should use exclusive write flag', () => {
-            const source = readFileSync(new URL('../src/infra/outgoing/downloader.ts', import.meta.url), 'utf-8')
-
-            // Must use 'wx' flag (exclusive write - fails if file exists)
-            expect(source).toContain("flag: 'wx'")
-
-            // Must set restrictive permissions
-            expect(source).toContain('mode: 0o600')
+        const expired = plantEntry('expired_dir', (p) => {
+            mkdirSync(p)
+            writeFileSync(join(p, 'payload'), 'expired')
         })
+        backdate(fresh, 1_000) // 1s
+        backdate(expired, 60 * 60 * 1_000) // 1h
 
-        test('outbound-attachments.ts should NOT use predictable Date.now() filenames', () => {
-            const source = readFileSync(new URL('../src/infra/outgoing/downloader.ts', import.meta.url), 'utf-8')
+        const manager = new TempFileManager({ maxAge: 10 * 60 * 1_000 })
+        manager.start()
+        await manager.destroy()
 
-            // Must NOT use Date.now() for temp filenames
-            expect(source).not.toMatch(/imsg_temp_\$\{Date\.now\(\)\}/)
-        })
+        expect(existsSync(fresh)).toBe(true)
+        expect(existsSync(expired)).toBe(false)
+    })
+
+    it('ignores non-prefixed entries even when they are expired', async () => {
+        // This planting bypasses plantEntry (non-standard name on purpose).
+        const foreign = join(REAL_TEMP_DIR, `user_vacation_${RUN_ID}.jpg`)
+        writeFileSync(foreign, 'user data')
+        planted.push(foreign)
+        backdate(foreign, 60 * 60 * 1_000)
+
+        const manager = new TempFileManager({ maxAge: 10 * 60 * 1_000 })
+        manager.start()
+        await manager.destroy()
+
+        expect(existsSync(foreign)).toBe(true)
+    })
+
+    it('start() after destroy() rejects with a ConfigError (prevents reuse)', async () => {
+        const manager = new TempFileManager()
+        manager.start()
+        await manager.destroy()
+
+        expect(() => manager.start()).toThrow(/destroyed/)
     })
 })

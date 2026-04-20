@@ -4,10 +4,14 @@
  * Parses, normalizes, validates, and matches iMessage chat identifiers.
  *
  * Supported formats:
- *   service;+;guid        group chat       (iMessage;+;chat613..., any;+;chat687...)
+ *
+ *   service;+;guid        group chat       (iMessage;+;chat613…, any;+;chat687…)
  *   service;-;address     direct message   (iMessage;-;+1234567890)
  *   chat<id>              bare group GUID  (chat61321855167474084)
+ *   bare address          DM recipient     (+1234567890, user@example.com, …)
  */
+
+import { ConfigError } from './errors'
 
 // -----------------------------------------------
 // Types
@@ -24,12 +28,20 @@ export type ChatServicePrefix = 'iMessage' | 'SMS' | 'RCS' | 'any' | (string & {
 // Constants
 // -----------------------------------------------
 
-const CHAT_SERVICE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9._-]*$/
-const GUID_MIN_LENGTH = 8
-const BARE_GUID_MIN_LENGTH = 10
-const BARE_GUID_PREFIX = 'chat'
 const GROUP_SEPARATOR = ';+;'
 const DM_SEPARATOR = ';-;'
+
+const CHAT_SERVICE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9._-]*$/
+
+/**
+ * Bare Messages.app chat GUID: the literal prefix `chat` followed by at least
+ * one ASCII alphanumeric or hyphen (`chat61321855167474084`, `chat687E84CA-…`).
+ *
+ * The trailing `+` rejects the 4-character string `"chat"` alone, and email
+ * addresses starting with "chat" (e.g. `chatbot@openai.com`) fail because `@`
+ * and `.` are not in the body character class.
+ */
+const BARE_GROUP_GUID_PATTERN = /^chat[A-Za-z0-9-]+$/
 
 // -----------------------------------------------
 // Helpers
@@ -42,15 +54,14 @@ const DM_SEPARATOR = ';-;'
  */
 export function parseChatServicePrefix(value: string | null | undefined): ChatServicePrefix | null {
     if (value == null || value === '') return null
+
     return CHAT_SERVICE_PREFIX_PATTERN.test(value) ? (value as ChatServicePrefix) : null
 }
 
 function isValidPrefixedFormat(raw: string, separator: string): boolean {
     const index = raw.indexOf(separator)
 
-    if (index === -1) {
-        return false
-    }
+    if (index === -1) return false
 
     const prefix = raw.slice(0, index)
     const suffix = raw.slice(index + separator.length)
@@ -78,9 +89,13 @@ export class ChatId {
     // Factory methods
     // -----------------------------------------------
 
-    /** Construct from a raw identifier string. */
+    /**
+     * Construct from a raw identifier string. Whitespace is trimmed —
+     * the name signals the input may be untrusted.
+     */
     static fromUserInput(raw: string): ChatId {
-        return new ChatId(raw, ChatId.detectGroup(raw))
+        const trimmed = raw.trim()
+        return new ChatId(trimmed, ChatId.detectGroup(trimmed))
     }
 
     /** Construct a DM chat id from a recipient address and optional service prefix. */
@@ -92,29 +107,15 @@ export class ChatId {
     // Computed properties
     // -----------------------------------------------
 
-    /** Chat kind as a string. */
-    get kind(): 'group' | 'dm' {
-        return this.isGroup ? 'group' : 'dm'
-    }
-
     /**
      * Core identifier with all service prefixes stripped.
      *
-     * `iMessage;-;pilot@photon.codes` → `pilot@photon.codes`
-     * `iMessage;+;chat613ABF`         → `chat613ABF`
-     * `chat613ABF`                    → `chat613ABF`
+     *   iMessage;-;pilot@photon.codes  →  pilot@photon.codes
+     *   iMessage;+;chat613ABF          →  chat613ABF
+     *   chat613ABF                     →  chat613ABF
      */
     get coreIdentifier(): string {
         return this.extractAfter(GROUP_SEPARATOR) ?? this.extractAfter(DM_SEPARATOR) ?? this.raw
-    }
-
-    /**
-     * Group identifier: the GUID portion for groups, raw for non-groups.
-     */
-    get groupIdentifier(): string {
-        if (!this.isGroup) return this.raw
-
-        return this.extractAfter(GROUP_SEPARATOR) ?? this.raw
     }
 
     // -----------------------------------------------
@@ -122,65 +123,48 @@ export class ChatId {
     // -----------------------------------------------
 
     /**
-     * Extract the recipient address from a DM chat id.
+     * Extract the recipient address from a `service;-;address` DM chat id.
      *
-     * Returns `null` for group chats or bare values without a separator.
+     * Returns `null` for any other form (bare address, group, etc.).
      */
     extractRecipient(): string | null {
-        if (this.isGroup) return null
-
         return this.extractAfter(DM_SEPARATOR)
-    }
-
-    /** Extract everything after a separator, or null if the separator is absent. */
-    private extractAfter(separator: string): string | null {
-        if (!this.raw.includes(separator)) return null
-
-        return this.raw.split(separator).slice(1).join(separator)
-    }
-
-    /**
-     * Check whether this ChatId matches another.
-     *
-     * Compares raw strings and core identifiers (case-sensitive).
-     */
-    matches(other: ChatId): boolean {
-        return this.raw === other.raw || this.coreIdentifier === other.coreIdentifier
     }
 
     /**
      * Validate the chat id format.
      *
-     * Throws `Error` for malformed inputs. Accepts the three documented formats:
-     * `service;+;guid`, `service;-;address`, and bare GUIDs (≥8 chars, no semicolons).
+     * Throws `IMessageError` (code `CONFIG`) for malformed inputs. Accepts the
+     * three documented formats: `service;+;guid`, `service;-;address`, and any
+     * non-empty bare identifier (no semicolons).
      */
     validate(): void {
-        if (this.raw === '') {
-            throw new Error('ChatId cannot be empty')
+        if (this.raw.trim() === '') {
+            throw ConfigError('ChatId cannot be empty')
         }
 
-        if (!this.raw.includes(';')) {
-            if (this.raw.length < GUID_MIN_LENGTH) {
-                throw new Error(`Bare GUID too short: "${this.raw}" (minimum ${GUID_MIN_LENGTH} characters)`)
-            }
-            return
-        }
+        if (!this.raw.includes(';')) return
 
         if (isValidPrefixedFormat(this.raw, GROUP_SEPARATOR) || isValidPrefixedFormat(this.raw, DM_SEPARATOR)) {
             return
         }
 
-        throw new Error(`Malformed chat id: "${this.raw}" (expected service;+;guid or service;-;address)`)
+        throw ConfigError(`Malformed chat id: "${this.raw}" (expected service;+;guid or service;-;address)`)
     }
 
     /**
      * Build a full Messages.app guid with a service prefix.
      *
-     * `chat613ABF` + `iMessage` → `iMessage;+;chat613ABF`
+     *   chat613ABF + `iMessage`  →  iMessage;+;chat613ABF
+     *
+     * Group-only: throws `IMessageError` (code `CONFIG`) on DM instances —
+     * calling on a DM would produce a malformed id like `any;+;+1234567890`.
      */
     buildGroupGuid(prefix: ChatServicePrefix): string {
-        const core = this.groupIdentifier
-        return `${prefix}${GROUP_SEPARATOR}${core}`
+        if (!this.isGroup) {
+            throw ConfigError(`buildGroupGuid is group-only; "${this.raw}" is not a group chat id`)
+        }
+        return `${prefix}${GROUP_SEPARATOR}${this.coreIdentifier}`
     }
 
     toString(): string {
@@ -191,12 +175,25 @@ export class ChatId {
     // Internal
     // -----------------------------------------------
 
+    /**
+     * Extract everything after the first occurrence of separator, or `null`
+     * if the separator is absent OR the suffix is empty (e.g. `iMessage;-;`).
+     * Empty-suffix inputs are malformed; treating them as "not found" keeps
+     * callers from receiving `""` as if it were a valid identifier.
+     */
+    private extractAfter(separator: string): string | null {
+        const index = this.raw.indexOf(separator)
+
+        if (index === -1) return null
+
+        const suffix = this.raw.slice(index + separator.length)
+        return suffix === '' ? null : suffix
+    }
+
     private static detectGroup(raw: string): boolean {
         if (raw.includes(GROUP_SEPARATOR)) return true
 
-        if (!raw.includes(';') && raw.startsWith(BARE_GUID_PREFIX) && raw.length > BARE_GUID_MIN_LENGTH) {
-            return true
-        }
+        if (!raw.includes(';') && BARE_GROUP_GUID_PATTERN.test(raw)) return true
 
         return false
     }

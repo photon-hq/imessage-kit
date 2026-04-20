@@ -1,17 +1,23 @@
 /**
  * Temporary file lifecycle management.
  *
- * Automatic cleanup of imsg_temp_* files in ~/Pictures.
- * Multi-instance safe: destroy() only removes expired files,
- * preventing one SDK instance from deleting another's in-flight files.
+ * The send pipeline copies attachments into `~/Pictures/imsg_temp_*`
+ * directories (see `applescript-builder.ts`) so Messages.app's sandbox
+ * can read them — this manager sweeps those entries when they exceed
+ * `maxAge`.
+ *
+ * Multi-instance safe: cleanup filters by mtime, so one SDK instance
+ * never deletes another's in-flight attachments.
  */
 
-import { existsSync, lstatSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const TEMP_FILE_PREFIX = 'imsg_temp_'
-const TEMP_DIR = join(homedir(), 'Pictures')
+import { ConfigError } from '../../domain/errors'
+import { MESSAGES_APP_TEMP_FILE_PREFIX, MESSAGES_APP_TEMP_WRITE_DIR } from '../../domain/messages-app'
+
+const TEMP_DIR = join(homedir(), MESSAGES_APP_TEMP_WRITE_DIR)
 
 // -----------------------------------------------
 // Config
@@ -36,13 +42,11 @@ const DEFAULTS = {
 // TempFileManager
 // -----------------------------------------------
 
-/** Manages lifecycle of imsg_temp_* files in ~/Pictures. */
+/** Manages lifecycle of `imsg_temp_*` entries in ~/Pictures. */
 export class TempFileManager {
     private readonly config: Required<TempFileManagerConfig>
     private cleanupTimer: NodeJS.Timeout | null = null
     private destroyPromise: Promise<void> | null = null
-    private isDestroying = false
-    private isDestroyed = false
 
     constructor(config: TempFileManagerConfig = {}) {
         this.config = {
@@ -58,30 +62,20 @@ export class TempFileManager {
 
     /** Start the periodic cleanup timer. */
     start(): void {
-        if (this.isDestroying) {
-            throw new Error('TempFileManager is destroying, cannot start')
-        }
-
-        if (this.isDestroyed) {
-            throw new Error('TempFileManager is destroyed, cannot start')
+        if (this.destroyPromise) {
+            throw ConfigError('TempFileManager is destroyed or destroying, cannot start')
         }
 
         if (this.cleanupTimer) return
 
-        this.cleanup().catch((error) => {
-            if (this.config.debug) {
-                console.error('[TempFileManager] Startup cleanup failed:', error)
-            }
-        })
+        this.removeExpiredFiles()
 
         this.cleanupTimer = setInterval(() => {
-            this.cleanup().catch((error) => {
-                if (this.config.debug) {
-                    console.error('[TempFileManager] Periodic cleanup failed:', error)
-                }
-            })
+            if (this.destroyPromise) return
+            this.removeExpiredFiles()
         }, this.config.cleanupInterval)
 
+        // Allow process exit if this timer is the only remaining event.
         this.cleanupTimer.unref()
 
         if (this.config.debug) {
@@ -91,148 +85,66 @@ export class TempFileManager {
         }
     }
 
-    /** Stop the periodic cleanup timer. */
-    stop(): void {
-        if (this.cleanupTimer) {
-            clearInterval(this.cleanupTimer)
-            this.cleanupTimer = null
-        }
-    }
-
     /** Stop the timer and remove expired files. */
     async destroy(): Promise<void> {
-        if (this.isDestroyed) return
-
-        if (this.destroyPromise) {
-            await this.destroyPromise
-            return
-        }
-
-        this.destroyPromise = (async () => {
-            this.isDestroying = true
-            this.stop()
-
-            try {
-                await this.removeFiles({ ignoreAge: false })
-            } finally {
-                this.isDestroyed = true
-                this.isDestroying = false
-
-                if (this.config.debug) {
-                    console.log('[TempFileManager] Destroyed')
-                }
-            }
-        })()
-
-        try {
-            await this.destroyPromise
-        } finally {
-            this.destroyPromise = null
-        }
-    }
-
-    // -----------------------------------------------
-    // Cleanup
-    // -----------------------------------------------
-
-    /** Remove expired temp files. */
-    async cleanup(): Promise<{ removed: number; errors: number }> {
-        if (this.isDestroyed) return { removed: 0, errors: 0 }
-        return this.removeFiles({ ignoreAge: false })
-    }
-
-    /** Remove all temp files regardless of age. */
-    async cleanupAll(): Promise<{ removed: number; errors: number }> {
-        if (this.isDestroyed) return { removed: 0, errors: 0 }
-        return this.removeFiles({ ignoreAge: true })
-    }
-
-    // -----------------------------------------------
-    // Stats
-    // -----------------------------------------------
-
-    /** Return current temp file count, running state, and config. */
-    getStats(): {
-        readonly currentFiles: number
-        readonly isRunning: boolean
-        readonly config: Required<TempFileManagerConfig>
-    } {
-        let currentFiles = 0
-
-        try {
-            if (existsSync(TEMP_DIR)) {
-                const files = readdirSync(TEMP_DIR)
-                currentFiles = files.filter((f) => f.startsWith(TEMP_FILE_PREFIX)).length
-            }
-        } catch {
-            // Return 0 when scan fails
-        }
-
-        return {
-            currentFiles,
-            isRunning: this.cleanupTimer !== null,
-            config: { ...this.config },
-        }
+        if (this.destroyPromise) return this.destroyPromise
+        this.destroyPromise = this.doDestroy()
+        return this.destroyPromise
     }
 
     // -----------------------------------------------
     // Internal
     // -----------------------------------------------
 
-    private async removeFiles(options: { ignoreAge: boolean }): Promise<{ removed: number; errors: number }> {
-        let removed = 0
-        let errors = 0
+    private async doDestroy(): Promise<void> {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer)
+            this.cleanupTimer = null
+        }
+
+        this.removeExpiredFiles()
+
+        if (this.config.debug) {
+            console.log('[TempFileManager] Destroyed')
+        }
+    }
+
+    private removeExpiredFiles(): void {
         const now = Date.now()
 
         try {
-            if (!existsSync(TEMP_DIR)) return { removed, errors }
+            if (!existsSync(TEMP_DIR)) return
 
-            const files = readdirSync(TEMP_DIR)
+            const entries = readdirSync(TEMP_DIR)
 
-            for (const file of files) {
-                if (!file.startsWith(TEMP_FILE_PREFIX)) continue
+            for (const entry of entries) {
+                if (!entry.startsWith(MESSAGES_APP_TEMP_FILE_PREFIX)) continue
 
-                const filePath = join(TEMP_DIR, file)
+                const entryPath = join(TEMP_DIR, entry)
 
                 try {
-                    const stats = lstatSync(filePath)
+                    const stats = lstatSync(entryPath)
+                    const age = now - stats.mtimeMs
+                    if (age <= this.config.maxAge) continue
 
-                    if (!stats.isFile()) {
-                        if (this.config.debug) {
-                            console.log(`[TempFileManager] Skipping non-regular file: ${file}`)
-                        }
-                        continue
-                    }
-
-                    if (!options.ignoreAge) {
-                        const fileAge = now - stats.mtimeMs
-                        if (fileAge <= this.config.maxAge) continue
-                    }
-
-                    unlinkSync(filePath)
-                    removed++
+                    // `recursive: true` handles both the current directory
+                    // layout and any legacy single-file temp entries;
+                    // `force: true` tolerates races (e.g. concurrent sweep).
+                    rmSync(entryPath, { recursive: true, force: true })
 
                     if (this.config.debug) {
-                        console.log(`[TempFileManager] Removed: ${file}`)
+                        console.log(`[TempFileManager] Removed: ${entry}`)
                     }
                 } catch (error) {
-                    errors++
-
                     if (this.config.debug) {
-                        console.error(`[TempFileManager] Failed to remove: ${file}`, error)
+                        console.error(`[TempFileManager] Failed to remove: ${entry}`, error)
                     }
                 }
-            }
-
-            if (this.config.debug && (removed > 0 || errors > 0)) {
-                console.log(`[TempFileManager] Done: removed ${removed}, errors ${errors}`)
             }
         } catch (error) {
             if (this.config.debug) {
                 console.error('[TempFileManager] Cleanup process error:', error)
             }
         }
-
-        return { removed, errors }
     }
 }

@@ -50,7 +50,13 @@ export function getDarwinMajorVersion(osRelease: string = release()): number {
 // Service prefix
 // -----------------------------------------------
 
-/** Map Darwin major version to the ChatId service prefix used by Messages.app. */
+/**
+ * Map Darwin major version to the ChatId service prefix used by Messages.app.
+ *
+ * Threshold: Darwin 25 ≙ macOS 26 (Tahoe), where Messages.app switched from
+ * the per-service `iMessage;+;…` GUID form to the transport-agnostic
+ * `any;+;…` form. Earlier systems still require `iMessage`.
+ */
 export function detectChatServicePrefix(darwinMajor: number = getDarwinMajorVersion()): ChatServicePrefix {
     return darwinMajor >= 25 ? 'any' : 'iMessage'
 }

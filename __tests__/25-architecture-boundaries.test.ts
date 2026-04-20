@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as ts from 'typescript'
 
-type Layer = 'application' | 'config' | 'domain' | 'index' | 'infra' | 'sdk' | 'sdk-bounds' | 'types' | 'utils'
+type Layer = 'application' | 'domain' | 'index' | 'infra' | 'sdk' | 'sdk-bounds' | 'types' | 'utils'
 
 interface Edge {
     readonly from: string
@@ -15,7 +15,6 @@ const SRC_ROOT = fileURLToPath(new URL('../src/', import.meta.url))
 const FORBIDDEN_DIRECTORY_NAMES = new Set(['core', 'helpers', 'shared', 'tools'])
 const ALLOWED_TOP_LEVEL_ENTRIES = [
     'application',
-    'config.ts',
     'domain',
     'index.ts',
     'infra',
@@ -116,7 +115,6 @@ function collectInternalEdges(): Edge[] {
 function getLayer(relativePath: string): Layer {
     if (relativePath === 'sdk.ts') return 'sdk'
     if (relativePath === 'index.ts') return 'index'
-    if (relativePath === 'config.ts') return 'config'
     if (relativePath === 'sdk-bounds.ts') return 'sdk-bounds'
     if (relativePath.startsWith('application/')) return 'application'
     if (relativePath.startsWith('domain/')) return 'domain'
@@ -167,18 +165,12 @@ function assertAllowedDependency(edge: Edge): void {
         case 'utils':
             return
 
-        case 'config':
-            if (edge.to !== 'sdk-bounds.ts' && edge.to !== 'domain/validate.ts') {
-                throw new Error(`config.ts may only re-export sdk bounds and send limits (${edge.from} -> ${edge.to})`)
-            }
-            return
-
         case 'sdk-bounds':
             throw new Error(`sdk-bounds.ts must not depend on internal modules (${edge.from} -> ${edge.to})`)
 
         case 'sdk':
-            if (toLayer === 'index' || toLayer === 'config') {
-                throw new Error(`sdk.ts must not depend on public/compat facades (${edge.from} -> ${edge.to})`)
+            if (toLayer === 'index') {
+                throw new Error(`sdk.ts must not depend on the public barrel (${edge.from} -> ${edge.to})`)
             }
             return
 
@@ -217,10 +209,8 @@ describe('Architecture Boundaries', () => {
     })
 
     it('keeps root helper facades narrowly scoped', () => {
-        const configImporters = internalEdges.filter((edge) => edge.to === 'config.ts').map((edge) => edge.from)
         const sdkBoundsImporters = internalEdges.filter((edge) => edge.to === 'sdk-bounds.ts').map((edge) => edge.from)
 
-        expect(configImporters).toEqual(['index.ts'])
-        expect(sdkBoundsImporters.sort()).toEqual(['config.ts', 'sdk.ts'])
+        expect(sdkBoundsImporters.sort()).toEqual(['index.ts', 'sdk.ts'])
     })
 })

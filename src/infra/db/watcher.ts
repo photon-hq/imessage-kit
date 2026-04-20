@@ -47,7 +47,6 @@ export interface WatchSourceOptions {
     readonly databasePath: string
     readonly watchFactory?: WatchFactory
     readonly onBatch?: (messages: readonly Message[]) => void | Promise<void>
-    readonly onCheckpoint?: (checkTime: Date) => void
     readonly onError?: (error: Error) => void
     readonly debug?: boolean
 }
@@ -71,7 +70,6 @@ export class MessageWatchSource {
     private readonly watchFactory: WatchFactory
 
     private readonly onBatch?: (messages: readonly Message[]) => void | Promise<void>
-    private readonly onCheckpoint?: (checkTime: Date) => void
     private readonly onError?: (error: Error) => void
     private readonly debug: boolean
 
@@ -84,6 +82,14 @@ export class MessageWatchSource {
     private walWatcher: WatchHandle | null = null
     private dirWatcher: WatchHandle | null = null
 
+    /**
+     * Handle to the running consumer loop. `stop()` awaits this to guarantee
+     * that no `onBatch` (= plugin dispatch) is in flight after stop resolves —
+     * otherwise plugin `onIncomingMessage` could race with SDK shutdown's
+     * `onDestroy`, violating the documented lifecycle contract.
+     */
+    private consumePromise: Promise<void> | null = null
+
     constructor(options: WatchSourceOptions) {
         this.database = options.database
         this.databasePath = options.databasePath
@@ -92,7 +98,6 @@ export class MessageWatchSource {
         this.watchFactory = options.watchFactory ?? ((path, listener) => watch(path, listener))
 
         this.onBatch = options.onBatch
-        this.onCheckpoint = options.onCheckpoint
         this.onError = options.onError
         this.debug = options.debug ?? false
     }
@@ -111,7 +116,7 @@ export class MessageWatchSource {
         try {
             this.ensureWatching()
             this.trigger()
-            void this.consumeLoop()
+            this.consumePromise = this.consumeLoop()
         } catch (error) {
             this.isRunning = false
             this.detachWALWatcher()
@@ -120,9 +125,16 @@ export class MessageWatchSource {
         }
     }
 
-    /** Stop watching and release all resources. */
-    stop(): void {
-        if (!this.isRunning) return
+    /**
+     * Stop watching and release all resources.
+     *
+     * Resolves only after the consumer loop has actually exited — any
+     * `onBatch` in flight runs to completion first. This is the property
+     * the SDK's `close()` relies on to avoid dispatching to plugins after
+     * their `onDestroy` has already fired.
+     */
+    async stop(): Promise<void> {
+        if (!this.isRunning && !this.consumePromise) return
 
         this.isRunning = false
 
@@ -134,6 +146,10 @@ export class MessageWatchSource {
             this.triggerResolve = null
         }
         this.hasPendingTrigger = false
+
+        const pending = this.consumePromise
+        this.consumePromise = null
+        if (pending) await pending
     }
 
     // -----------------------------------------------
@@ -188,12 +204,6 @@ export class MessageWatchSource {
             if (last) this.lastRowId = last.rowId
         }
 
-        try {
-            this.onCheckpoint?.(new Date())
-        } catch (error) {
-            this.handleError(error)
-        }
-
         return messages.length === BATCH_LIMIT
     }
 
@@ -203,10 +213,15 @@ export class MessageWatchSource {
 
     private ensureWatching(): void {
         this.attachWALWatcher()
-        if (!this.walWatcher) this.attachDirWatcher()
+        if (this.walWatcher) return
 
-        if (!this.walWatcher && !this.dirWatcher) {
-            throw new Error('Failed to start watcher: neither WAL file nor directory watch could be established')
+        try {
+            this.attachDirWatcher()
+        } catch (error) {
+            const cause = toError(error)
+            throw new Error(`Failed to start watcher: WAL missing and directory watch failed — ${cause.message}`, {
+                cause,
+            })
         }
     }
 
@@ -230,8 +245,14 @@ export class MessageWatchSource {
 
             this.walWatcher = watcher
             this.detachDirWatcher()
-        } catch {
-            // WAL not available; ensureWatching will fall back to directory watch
+        } catch (error) {
+            // Only ENOENT is a legitimate fallback to dir-watch — the WAL
+            // file hasn't been created yet. Everything else (EACCES, EMFILE,
+            // …) is fatal and must surface.
+            if (!isMissingFileError(error)) throw error
+            if (this.debug) {
+                console.warn('[WatchSource] WAL missing, falling back to dir watch')
+            }
         }
     }
 
@@ -244,31 +265,31 @@ export class MessageWatchSource {
     private attachDirWatcher(): void {
         if (this.dirWatcher) return
 
-        try {
-            const dir = dirname(this.databasePath)
-            const watcher = this.watchFactory(dir, (_eventType, filename) => {
-                const name =
-                    typeof filename === 'string'
-                        ? filename
-                        : Buffer.isBuffer(filename)
-                          ? filename.toString('utf8')
-                          : null
+        const dir = dirname(this.databasePath)
+        const watcher = this.watchFactory(dir, (_eventType, filename) => {
+            const name =
+                typeof filename === 'string' ? filename : Buffer.isBuffer(filename) ? filename.toString('utf8') : null
 
-                if (name !== this.walFilename) return
+            if (name !== this.walFilename) return
 
+            // attachWALWatcher throws on non-ENOENT fs errors (EACCES,
+            // EMFILE, …). Route through handleError instead of letting
+            // the throw escape the fs.watch callback — that would
+            // surface as an uncaughtException and crash the host.
+            try {
                 this.attachWALWatcher()
                 this.trigger()
-            })
+            } catch (error) {
+                this.handleError(error)
+            }
+        })
 
-            watcher.on('error', () => {
-                this.detachDirWatcher()
-                this.recoverOrStop('Directory watcher failed')
-            })
+        watcher.on('error', () => {
+            this.detachDirWatcher()
+            this.recoverOrStop('Directory watcher failed')
+        })
 
-            this.dirWatcher = watcher
-        } catch {
-            // Directory watch not available
-        }
+        this.dirWatcher = watcher
     }
 
     private detachDirWatcher(): void {
@@ -285,7 +306,11 @@ export class MessageWatchSource {
         try {
             this.ensureWatching()
         } catch (error) {
-            this.stop()
+            // Fire-and-forget: stop() is now async (awaits consumer loop),
+            // but this runs inside an fs.watch callback where we can't await.
+            // The error is reported immediately; the stop work completes in
+            // the background.
+            void this.stop()
             this.handleError(new Error(`${context}: ${toError(error).message}`))
         }
     }
@@ -305,4 +330,12 @@ export class MessageWatchSource {
             }
         }
     }
+}
+
+// -----------------------------------------------
+// Helpers
+// -----------------------------------------------
+
+function isMissingFileError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT'
 }

@@ -1,15 +1,15 @@
 /**
  * iMessage message model.
  *
- * Message item types (`message.item_type`):
+ * Message item types (`message.item_type`, Apple `IMItemType`):
  *
- *   0  text / media message
- *   1  participant added or removed (sub-typed by `group_action_type`)
- *   2  group display name changed
- *   3  group action (photo change, background change, etc.)
- *   4  location sharing status change
- *   5  message-level action (kept audio, etc.)
- *   6  FaceTime / call conversation event
+ *   0  Message                        text / media message
+ *   1  ParticipantChange              add / remove (sub-typed by `group_action_type`)
+ *   2  GroupTitleChange               display name changed
+ *   3  GroupAction                    photo, background, or other group action
+ *   4  LocationShareStatusChange      location sharing status change
+ *   5  MessageAction                  message-level action (kept audio, etc.)
+ *   6  TUConversation                 FaceTime / TelephonyUtilities conversation event
  */
 
 import type { Attachment } from './attachment'
@@ -21,21 +21,19 @@ import type { Service } from './service'
 // Message kind
 // -----------------------------------------------
 
-/** Normalized message kind derived from `message.item_type`. */
-export type MessageKind =
-    | 'text'
-    | 'reaction'
-    | 'memberAdded'
-    | 'memberRemoved'
-    | 'nameChanged'
-    | 'groupAction'
-    | 'unknown'
+/**
+ * Normalized message kind derived from `message.item_type`.
+ *
+ * Orthogonal to reactions — a row with a non-null `reaction` payload still
+ * carries its wire-level kind here (typically `'text'` for tapbacks).
+ */
+export type MessageKind = 'text' | 'memberAdded' | 'memberRemoved' | 'nameChanged' | 'groupAction' | 'unknown'
 
 /**
  * Resolve `item_type` and `group_action_type` into a MessageKind.
  *
- * Maps 0–3 to specific kinds; 4–6 fall through to 'unknown'.
- * For type 1, `group_action_type` distinguishes added (0) from removed (1).
+ * Maps itemType 0–3 to specific kinds; 4–6 fall through to 'unknown'.
+ * For itemType=1, `group_action_type` distinguishes added (0) from removed (1).
  */
 export function resolveMessageKind(itemType: number | null, groupActionType: number | null): MessageKind {
     switch (itemType) {
@@ -116,12 +114,19 @@ export function resolveShareDirection(code: number | null): ShareDirection {
 /** Scheduled message kind derived from `message.schedule_type`. */
 export type ScheduleKind = 'none' | 'sendLater' | 'unknown'
 
-/** Resolve `message.schedule_type` to a typed kind. */
+/**
+ * Resolve `message.schedule_type` to a typed kind.
+ *
+ * Both `1` and `2` are observed in the wild as "send later" markers
+ * (the `message_is_scheduled_message_index` in chat.db is defined on
+ * `schedule_type = 2`); accept either for forward compatibility.
+ */
 export function resolveScheduleKind(code: number | null): ScheduleKind {
     switch (code) {
         case 0:
             return 'none'
         case 1:
+        case 2:
             return 'sendLater'
         default:
             return 'unknown'
@@ -131,7 +136,12 @@ export function resolveScheduleKind(code: number | null): ScheduleKind {
 /** Scheduled message status derived from `message.schedule_state`. */
 export type ScheduleStatus = 'none' | 'pending' | 'sent' | 'failed' | 'unknown'
 
-/** Resolve `message.schedule_state` to a typed status. */
+/**
+ * Resolve `message.schedule_state` to a typed status.
+ *
+ * Other values (e.g. `4`, observed occasionally in chat.db) are Apple-internal
+ * transient states not covered by a public enum and are reported as `unknown`.
+ */
 export function resolveScheduleStatus(code: number | null): ScheduleStatus {
     switch (code) {
         case 0:
@@ -157,14 +167,22 @@ export interface Message {
     readonly rowId: number
     /** Stable message id derived from `message.guid`. */
     readonly id: string
-    /** Normalized chat id suitable for routing and matching. */
-    readonly chatId: string
+    /**
+     * Normalized chat id suitable for routing and matching.
+     *
+     * `null` only when all authoritative sources are missing from the row
+     * (no `chat_guid` / `chat_id` via join, no `ck_chat_id`, and the message
+     * is in-bound so no `destination_caller_id`). Observable in rare WAL
+     * races before `chat_message_join` flushes — treat as "chat unknown,
+     * skip routing".
+     */
+    readonly chatId: string | null
     /** Chat kind derived from the owning chat. */
     readonly chatKind: ChatKind
     /** Database-associated remote participant handle. */
     readonly participant: string | null
-    /** Transport used for this message. */
-    readonly service: Service
+    /** Transport used for this message. `null` when the raw column is missing or unrecognized. */
+    readonly service: Service | null
     /** Best-effort decoded text body. */
     readonly text: string | null
     /** Normalized message kind. */
@@ -210,7 +228,7 @@ export interface Message {
     /** Critical alert message. */
     readonly isCriticalAlert: boolean
     /** Message was sent or received off-grid via satellite. */
-    readonly isOffGridMessage: boolean
+    readonly isOffGrid: boolean
     /** Sent or received timestamp. */
     readonly createdAt: Date
     /** Delivery confirmation timestamp. */
@@ -251,6 +269,16 @@ export interface Message {
     readonly scheduleStatus: ScheduleStatus
     /** Number of parts / segments in the message. */
     readonly segmentCount: number
+    /**
+     * Whether `message.cache_has_attachments` is set on the underlying row.
+     *
+     * Use this to detect a WAL race where a message row is already visible
+     * but its `message_attachment_join` entries have not yet been flushed —
+     * `hasAttachments === true && attachments.length === 0` means the
+     * attachments will arrive on a subsequent batch. Treat such messages
+     * as provisional and re-query (or wait for the next watcher tick).
+     */
+    readonly hasAttachments: boolean
     /** Reaction payload when this row is a reaction. */
     readonly reaction: Reaction | null
     /** Attachments linked to the message. */

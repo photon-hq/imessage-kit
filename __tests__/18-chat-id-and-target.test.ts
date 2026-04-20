@@ -3,8 +3,8 @@
  *
  * Covers:
  * - ChatId factory methods (fromDatabaseRow, fromUserInput, fromDMRecipient)
- * - ChatId properties (isGroup, coreIdentifier, groupIdentifier, forAppleScript)
- * - ChatId methods (extractRecipient, matches, validate, toString)
+ * - ChatId properties (isGroup, coreIdentifier)
+ * - ChatId methods (extractRecipient, validate, buildGroupGuid, toString)
  * - resolveTarget routing logic
  * - buildSendScript unified script generation
  */
@@ -12,12 +12,18 @@
 import { describe, expect, test } from 'bun:test'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { LIMITS } from '../src/config'
 import { ChatId } from '../src/domain/chat-id'
 import { IMessageError } from '../src/domain/errors'
 import { resolveTarget } from '../src/domain/routing'
 import { buildChatIdMatchSql } from '../src/infra/db/contract'
-import { buildSendScript } from '../src/infra/outgoing/applescript-transport'
+import { buildSendScript, type ResolvedAttachment } from '../src/infra/outgoing/applescript-builder'
+
+const SAFE_DIRS = ['Pictures', 'Downloads', 'Documents'].map((d) => join(homedir(), d))
+const attachmentFor = (path: string): ResolvedAttachment => ({
+    localPath: path,
+    needsBypass: !SAFE_DIRS.some((d) => path.startsWith(`${d}/`) || path === d),
+    sizeBytes: 1024,
+})
 
 // ============================================================
 // ChatId Value Object
@@ -29,7 +35,6 @@ describe('ChatId', () => {
             const id = ChatId.fromUserInput('chat61321855167474084')
             expect(id.raw).toBe('chat61321855167474084')
             expect(id.isGroup).toBe(true)
-            expect(id.kind).toBe('group')
         })
 
         test('should create from service-prefixed group', () => {
@@ -41,7 +46,6 @@ describe('ChatId', () => {
         test('should create from bare recipient (phone)', () => {
             const id = ChatId.fromUserInput('+1234567890')
             expect(id.isGroup).toBe(false)
-            expect(id.kind).toBe('dm')
         })
 
         test('should create from bare recipient (email)', () => {
@@ -52,7 +56,6 @@ describe('ChatId', () => {
         test('should create from 3-part DM format', () => {
             const id = ChatId.fromUserInput('iMessage;-;+1234567890')
             expect(id.isGroup).toBe(false)
-            expect(id.kind).toBe('dm')
         })
 
         test('should create from 2-part legacy DM format', () => {
@@ -78,7 +81,7 @@ describe('ChatId', () => {
                 guid: 'chat.guid',
             })
             expect(m.sql).toContain('chat.chat_identifier')
-            expect(m.params).toEqual([raw, raw, 'chatABC'])
+            expect(m.params).toEqual([raw, 'chatABC', raw, 'chatABC'])
         })
     })
 
@@ -131,29 +134,6 @@ describe('ChatId', () => {
         })
     })
 
-    // -------------------- Property: groupIdentifier --------------------
-    describe('groupIdentifier', () => {
-        test('should strip service;+; prefix from group chatIds', () => {
-            const id = ChatId.fromUserInput('iMessage;+;chat687179757169191512')
-            expect(id.groupIdentifier).toBe('chat687179757169191512')
-        })
-
-        test('should strip any;+; prefix from group chatIds', () => {
-            const id = ChatId.fromUserInput('any;+;chat687179757169191512')
-            expect(id.groupIdentifier).toBe('chat687179757169191512')
-        })
-
-        test('should return bare GUID unchanged', () => {
-            const id = ChatId.fromUserInput('chat61321855167474084')
-            expect(id.groupIdentifier).toBe('chat61321855167474084')
-        })
-
-        test('should return DM chatIds unchanged (not a group)', () => {
-            const id = ChatId.fromUserInput('iMessage;-;+1234567890')
-            expect(id.groupIdentifier).toBe('iMessage;-;+1234567890')
-        })
-    })
-
     // -------------------- Method: extractRecipient --------------------
     describe('extractRecipient', () => {
         test('should extract from 3-part DM format', () => {
@@ -175,40 +155,6 @@ describe('ChatId', () => {
         test('should return null for bare recipients (no semicolons)', () => {
             expect(ChatId.fromUserInput('+1234567890').extractRecipient()).toBeNull()
             expect(ChatId.fromUserInput('user@example.com').extractRecipient()).toBeNull()
-        })
-    })
-
-    // -------------------- Method: matches --------------------
-    describe('matches', () => {
-        test('should match identical raw strings', () => {
-            const a = ChatId.fromUserInput('iMessage;-;+1234567890')
-            const b = ChatId.fromUserInput('iMessage;-;+1234567890')
-            expect(a.matches(b)).toBe(true)
-        })
-
-        test('should match across service-prefixed and bare formats', () => {
-            const prefixed = ChatId.fromUserInput('iMessage;-;pilot@photon.codes')
-            const bare = ChatId.fromUserInput('pilot@photon.codes')
-            expect(prefixed.matches(bare)).toBe(true)
-            expect(bare.matches(prefixed)).toBe(true)
-        })
-
-        test('should match group formats with and without prefix', () => {
-            const prefixed = ChatId.fromUserInput('iMessage;+;chat613218551674')
-            const bare = ChatId.fromUserInput('chat613218551674')
-            expect(prefixed.matches(bare)).toBe(true)
-        })
-
-        test('should not match different identifiers', () => {
-            const a = ChatId.fromUserInput('iMessage;-;+1234567890')
-            const b = ChatId.fromUserInput('iMessage;-;+0987654321')
-            expect(a.matches(b)).toBe(false)
-        })
-
-        test('should not match group vs DM with different cores', () => {
-            const group = ChatId.fromUserInput('iMessage;+;chat61321855')
-            const dm = ChatId.fromUserInput('iMessage;-;+1234567890')
-            expect(group.matches(dm)).toBe(false)
         })
     })
 
@@ -249,9 +195,10 @@ describe('ChatId', () => {
             expect(() => ChatId.fromUserInput('').validate()).toThrow('ChatId cannot be empty')
         })
 
-        test('should reject short bare string', () => {
-            expect(() => ChatId.fromUserInput('invalid').validate()).toThrow('Bare GUID too short')
-            // iMessage;+;chat123 contains ;+; so it passes (no GUID length check for prefixed format)
+        test('should accept any non-empty semicolon-free bare string', () => {
+            // No length pre-flight — defer to the database / Messages.app to reject
+            // unknown identifiers with their authoritative error.
+            expect(() => ChatId.fromUserInput('invalid').validate()).not.toThrow()
             expect(() => ChatId.fromUserInput('iMessage;+;chat123').validate()).not.toThrow()
         })
 
@@ -335,7 +282,6 @@ describe('resolveTarget', () => {
         expect(target.kind).toBe('dm')
         if (target.kind === 'dm') {
             expect(target.recipient).toBe('+1234567890')
-            expect(target.chatIdHint).toBe('+1234567890')
         }
     })
 
@@ -369,33 +315,33 @@ describe('resolveTarget', () => {
         expect(target.kind).toBe('dm')
         if (target.kind === 'dm') {
             expect(target.recipient).toBe('+1234567890')
-            expect(target.chatIdHint).toBe('iMessage;-;+1234567890')
         }
     })
 
-    test('should fallback to group for legacy 2-part DM (no ;-; separator)', () => {
-        // Legacy 2-part format has a semicolon but extractRecipient returns null,
-        // so resolveTarget falls back to group
-        const target = resolveTarget('iMessage;user@example.com')
-        expect(target.kind).toBe('group')
-    })
-
-    test('should throw for unrecognized bare formats', () => {
-        // Bare input that is not a valid phone/email should throw, not silently fallback
-        expect(() => resolveTarget('some-arbitrary-string-long-enough')).toThrow(IMessageError)
+    test('should pass bare non-address strings through as DM for Messages.app to reject', () => {
+        // No local recipient-shape validation — Messages.app is the source of truth
+        const target = resolveTarget('some-arbitrary-string-long-enough')
+        expect(target.kind).toBe('dm')
+        if (target.kind === 'dm') {
+            expect(target.recipient).toBe('some-arbitrary-string-long-enough')
+        }
     })
 
     test('should throw for empty string', () => {
         expect(() => resolveTarget('')).toThrow(IMessageError)
     })
 
-    test('should throw for whitespace-only and too-long inputs', () => {
+    test('should throw for whitespace-only inputs', () => {
         // Whitespace-only trims to empty → throws
         expect(() => resolveTarget('   ')).toThrow(IMessageError)
+    })
 
-        // Too-long input fails validateRecipient → throws
-        const tooLong = 'a'.repeat(LIMITS.maxRecipientLength + 1)
-        expect(() => resolveTarget(tooLong)).toThrow(IMessageError)
+    test('should throw for malformed semicolon formats', () => {
+        // Has semicolons but not `;+;` or `;-;` with a valid prefix/suffix
+        expect(() => resolveTarget('iMessage;+')).toThrow('Malformed chat id')
+        expect(() => resolveTarget('iMessage;user@example.com')).toThrow('Malformed chat id')
+        expect(() => resolveTarget('abc;def')).toThrow('Malformed chat id')
+        expect(() => resolveTarget('a;b;c')).toThrow('Malformed chat id')
     })
 })
 
@@ -404,7 +350,7 @@ describe('resolveTarget', () => {
 // ============================================================
 describe('buildSendScript', () => {
     test('buddy + text only', () => {
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'buddy',
             identifier: '+1234567890',
             text: 'Hello',
@@ -416,7 +362,7 @@ describe('buildSendScript', () => {
     })
 
     test('chat + text only', () => {
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'chat',
             identifier: 'iMessage;+;chat613218',
             text: 'Hello',
@@ -427,10 +373,10 @@ describe('buildSendScript', () => {
     })
 
     test('buddy + attachment only (sandbox bypass)', () => {
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'buddy',
             identifier: '+1234567890',
-            attachmentPath: '/tmp/test.jpg',
+            attachment: attachmentFor('/tmp/test.jpg'),
         })
         expect(script).toContain('mktemp')
         expect(script).toContain('send theFile to targetBuddy')
@@ -438,10 +384,10 @@ describe('buildSendScript', () => {
 
     test('chat + attachment only (direct send in Pictures)', () => {
         const picturesPath = join(homedir(), 'Pictures', 'photo.jpg')
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'chat',
             identifier: 'iMessage;+;chat613218',
-            attachmentPath: picturesPath,
+            attachment: attachmentFor(picturesPath),
         })
         expect(script).toContain('send POSIX file')
         expect(script).toContain('to targetChat')
@@ -450,18 +396,18 @@ describe('buildSendScript', () => {
 
     test('buddy + text + attachment', () => {
         const downloadsPath = join(homedir(), 'Downloads', 'file.pdf')
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'buddy',
             identifier: 'user@example.com',
             text: 'Check this out',
-            attachmentPath: downloadsPath,
+            attachment: attachmentFor(downloadsPath),
         })
         expect(script).toContain('send "Check this out" to targetBuddy')
         expect(script).toContain('send POSIX file')
     })
 
     test('should escape special characters in identifier', () => {
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'buddy',
             identifier: 'user"test@example.com',
             text: 'Hello',
@@ -470,7 +416,7 @@ describe('buildSendScript', () => {
     })
 
     test('should escape special characters in text', () => {
-        const { script } = buildSendScript({
+        const script = buildSendScript({
             method: 'buddy',
             identifier: '+1234567890',
             text: 'Line1\nLine2\twith "quotes"',

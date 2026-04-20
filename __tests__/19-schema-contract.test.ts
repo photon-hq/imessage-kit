@@ -175,4 +175,13 @@ describe('Schema Contract Audit', () => {
             expect(sorted(getFunctionReturnProps(sources.mapper, fn))).toEqual(sorted(getInterfaceProps(source, iface)))
         }
     })
+
+    it('keeps the internal mapReaction helper aligned with the public Reaction interface', () => {
+        // mapReaction is a private helper (not exported), so it isn't covered by the rowTo* alignment
+        // check above. We assert its object-literal shape matches Reaction exactly so future additions
+        // to the interface can't silently drop fields at the mapping boundary.
+        const reactionFields = getFunctionReturnProps(sources.mapper, 'mapReaction')
+        const reactionIface = getInterfaceProps(sources.reaction, 'Reaction')
+        expect(sorted(reactionFields)).toEqual(sorted(reactionIface))
+    })
 })

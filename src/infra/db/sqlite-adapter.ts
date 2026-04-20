@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module'
 
 import { DatabaseError, toError } from '../../domain/errors'
+import type { QueryParam } from './contract'
 
 const require = createRequire(import.meta.url)
 
@@ -17,7 +18,7 @@ const require = createRequire(import.meta.url)
 
 /** Minimal prepared-statement contract shared by bun:sqlite and better-sqlite3. */
 export interface SqliteStatement {
-    readonly all: (...params: unknown[]) => unknown[]
+    readonly all: (...params: unknown[]) => Array<Record<string, unknown>>
 }
 
 /** Minimal database-handle contract shared by both runtimes. */
@@ -67,10 +68,13 @@ export class SqliteClient {
 
     private closed = false
 
-    constructor(
-        path: string,
-        readonly readOnly: boolean = true
-    ) {
+    /**
+     * @param path      SQLite database file path.
+     * @param readOnly  Open the database read-only. Defaults to `true` — writes to
+     *                  `chat.db` would corrupt Messages.app state, so only flip this
+     *                  when running against a test/fixture database.
+     */
+    constructor(path: string, readOnly = true) {
         const Ctor = resolveCtor()
 
         try {
@@ -81,11 +85,11 @@ export class SqliteClient {
         }
     }
 
-    protected all(sql: string, params: readonly unknown[] = []): Array<Record<string, unknown>> {
+    protected all(sql: string, params: readonly QueryParam[] = []): Array<Record<string, unknown>> {
         if (this.closed) throw DatabaseError('Database is closed')
 
         try {
-            return this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>
+            return this.db.prepare(sql).all(...params)
         } catch (error) {
             const cause = toError(error)
             throw DatabaseError(`Query failed: ${cause.message}`, cause)

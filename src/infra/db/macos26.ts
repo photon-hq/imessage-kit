@@ -52,6 +52,8 @@ const MESSAGE_FIELDS = [
     'message.date_edited',
     'message.date_retracted',
     'message.date_recovered',
+    'message.is_empty',
+    'message.message_summary_info',
     'message.reply_to_guid',
     'message.thread_originator_guid',
     'message.group_title',
@@ -66,6 +68,7 @@ const MESSAGE_FIELDS = [
     'message.schedule_type',
     'message.schedule_state',
     'message.part_count',
+    'message.cache_has_attachments',
     'message.associated_message_type',
     'message.associated_message_guid',
     'message.associated_message_emoji',
@@ -77,7 +80,7 @@ const MESSAGE_FIELDS = [
     'other_handle.id as affected_participant',
     'chat.chat_identifier as chat_id',
     'chat.guid as chat_guid',
-    'chat.service_name as chat_service',
+    'chat.style as chat_style',
 ] as const
 
 const CHAT_FIELDS = [
@@ -122,13 +125,13 @@ function escapeLikePattern(input: string): string {
 
 /** macOS 26 (Tahoe) query builder. */
 export const macos26Queries: MessagesDbQueries = {
-    schemaId: 'macos26',
-
     buildMessageQuery(filter: MessageQueryInput) {
         const conditions: string[] = []
         const params: QueryParam[] = []
 
-        if (filter.unreadOnly) {
+        if (filter.isRead === true) {
+            conditions.push('message.is_read = 1')
+        } else if (filter.isRead === false) {
             conditions.push('message.is_read = 0')
         }
 
@@ -157,9 +160,13 @@ export const macos26Queries: MessagesDbQueries = {
             params.push(filter.service)
         }
 
-        if (filter.hasAttachments) {
+        if (filter.hasAttachments === true) {
             conditions.push(
                 'EXISTS (SELECT 1 FROM message_attachment_join WHERE message_attachment_join.message_id = message.ROWID)'
+            )
+        } else if (filter.hasAttachments === false) {
+            conditions.push(
+                'NOT EXISTS (SELECT 1 FROM message_attachment_join WHERE message_attachment_join.message_id = message.ROWID)'
             )
         }
 
@@ -182,12 +189,6 @@ export const macos26Queries: MessagesDbQueries = {
             params.push(toMacTimestampNs(filter.before))
         }
 
-        if (filter.search) {
-            const escaped = escapeLikePattern(filter.search)
-            conditions.push("message.text LIKE ? ESCAPE '\\'")
-            params.push(`%${escaped}%`)
-        }
-
         const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
         const hasLimit = filter.limit != null && filter.limit > 0
@@ -199,6 +200,8 @@ export const macos26Queries: MessagesDbQueries = {
             limitClause = 'LIMIT ?'
             params.push(filter.limit as number)
         } else if (hasOffset) {
+            // SQLite requires a LIMIT clause whenever OFFSET is present;
+            // `LIMIT -1` means "no limit" and is the canonical idiom.
             limitClause = 'LIMIT -1'
         }
 
@@ -217,6 +220,10 @@ export const macos26Queries: MessagesDbQueries = {
                 FROM message
                 LEFT JOIN handle ON message.handle_id = handle.ROWID
                 LEFT JOIN handle AS other_handle ON message.other_handle = other_handle.ROWID
+                -- A message can appear in multiple chat_message_join rows (rare,
+                -- e.g. cross-posted group messages). MIN(chat_id) picks the
+                -- lowest-ROWID chat deterministically so repeated queries
+                -- return the same chat_guid/chat_identifier for the message.
                 LEFT JOIN chat ON chat.ROWID = (
                     SELECT MIN(chat_message_join.chat_id)
                     FROM chat_message_join
@@ -263,8 +270,10 @@ export const macos26Queries: MessagesDbQueries = {
             conditions.push('is_archived = 0')
         }
 
-        if (query.hasUnread) {
+        if (query.hasUnread === true) {
             conditions.push('unread_count > 0')
+        } else if (query.hasUnread === false) {
+            conditions.push('unread_count = 0')
         }
 
         if (query.search) {
@@ -283,11 +292,24 @@ export const macos26Queries: MessagesDbQueries = {
             orderBy = 'ORDER BY (display_name IS NULL), display_name ASC'
         }
 
+        const hasLimit = query.limit != null && query.limit > 0
+        const hasOffset = query.offset != null && query.offset > 0
+
         let limitClause = ''
 
-        if (query.limit != null && query.limit > 0) {
+        if (hasLimit) {
             limitClause = 'LIMIT ?'
-            params.push(query.limit)
+            params.push(query.limit as number)
+        } else if (hasOffset) {
+            // SQLite requires a LIMIT clause whenever OFFSET is present;
+            // `LIMIT -1` means "no limit" and is the canonical idiom.
+            limitClause = 'LIMIT -1'
+        }
+
+        const offsetClause = hasOffset ? 'OFFSET ?' : ''
+
+        if (hasOffset) {
+            params.push(query.offset as number)
         }
 
         return {
@@ -317,6 +339,7 @@ export const macos26Queries: MessagesDbQueries = {
                 ${where}
                 ${orderBy}
                 ${limitClause}
+                ${offsetClause}
             `,
             params,
         }
@@ -336,6 +359,36 @@ export const macos26Queries: MessagesDbQueries = {
                 )
                 AND (attachment.hide_attachment IS NULL OR attachment.hide_attachment = 0)
                 ORDER BY message_attachment_join.message_id ASC, message_attachment_join.attachment_id ASC
+            `,
+            params: messageIds,
+        }
+    },
+
+    buildMaxRowIdQuery() {
+        return { sql: 'SELECT MAX(ROWID) AS max_id FROM message', params: [] }
+    },
+
+    buildChatBackfillQuery(messageIds: readonly number[]) {
+        const placeholders = messageIds.map(() => '?').join(',')
+
+        // Same chat-resolution logic as buildMessageQuery: pick the lowest
+        // ROWID chat per message. Runs a moment later so chat_message_join
+        // has had time to commit.
+        return {
+            sql: `
+                SELECT
+                    chat_message_join.message_id AS message_rowid,
+                    chat.chat_identifier AS chat_id,
+                    chat.guid AS chat_guid,
+                    chat.style AS chat_style
+                FROM chat_message_join
+                INNER JOIN chat ON chat.ROWID = chat_message_join.chat_id
+                WHERE chat_message_join.message_id IN (${placeholders})
+                    AND chat_message_join.chat_id = (
+                        SELECT MIN(inner_join.chat_id)
+                        FROM chat_message_join inner_join
+                        WHERE inner_join.message_id = chat_message_join.message_id
+                    )
             `,
             params: messageIds,
         }
