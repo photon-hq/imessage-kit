@@ -19,6 +19,6 @@ const sdk = new IMessageSDK({ plugins: [myPlugin] })
 // Start watcher so onFromMe fires for our own sends.
 await sdk.startWatching()
 
-await sdk.send({ to: 'pilot@photon.codes', text: 'Test with plugin' })
+await sdk.send({ to: 'recipient@example.com', text: 'Test with plugin' })
 await new Promise((r) => setTimeout(r, 2000))
 await sdk.close()

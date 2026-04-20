@@ -20,7 +20,7 @@ await sdk.startWatching({
     },
 })
 
-await sdk.send({ to: 'pilot@photon.codes', text })
+await sdk.send({ to: 'recipient@example.com', text })
 
 // Give the watcher a moment to observe the row
 await new Promise((r) => setTimeout(r, 3_000))

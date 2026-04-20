@@ -123,7 +123,7 @@ Do **not** unify them — users configure watcher events inline but register plu
 
 ## AI Hardness — mandatory for non-trivial changes
 
-Before proposing any non-trivial change, follow the protocol in [`docs/AI-HARDNESS.md`](docs/AI-HARDNESS.md):
+Before proposing any non-trivial change, follow this protocol:
 
 1. **Define axes** — correctness, simplicity, decoupling, clarity, API impact, performance (in priority order)
 2. **Generate ≥3 candidates** (conservative / aggressive / middle) with trade-offs
@@ -132,4 +132,4 @@ Before proposing any non-trivial change, follow the protocol in [`docs/AI-HARDNE
 5. **Loose-coupling & clean-code rules** — one responsibility per module, no silent fallbacks, no shells, delete > add, small blast radius, test-first for behavior changes
 6. **Produce a decision artifact** before writing code. No artifact = not enough thought = do not act.
 
-Dead-code diagnosis uses the 5-case framework documented in §5 of `docs/AI-HARDNESS.md`. Public API surface (exported methods, interface fields) is kept even when internal consumers are zero, since SDK users live outside this repo.
+Dead-code diagnosis: grep consumers first. Zero internal consumers → delete, don't document. Exception: public API surface (exported methods, interface fields) is kept since SDK users live outside this repo.

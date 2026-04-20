@@ -625,19 +625,24 @@ describe('Security: Example Files Audit', () => {
     test('examples should not contain real credentials', () => {
         const examples = [
             '../examples/01-send-text.ts',
+            '../examples/02-send-image.ts',
+            '../examples/03-send-file.ts',
+            '../examples/04-send-group.ts',
+            '../examples/05-query-messages.ts',
+            '../examples/06-list-chats.ts',
+            '../examples/07-watch-messages.ts',
             '../examples/08-auto-reply.ts',
-            '../examples/14-scheduled-messages.ts',
+            '../examples/09-get-sent-message.ts',
+            '../examples/10-plugin.ts',
+            '../examples/11-error-handling.ts',
+            '../examples/logger-plugin.ts',
         ]
 
         for (const file of examples) {
-            try {
-                const source = readFileSync(new URL(file, import.meta.url), 'utf-8')
-                // Should not contain real phone numbers (10+ digit patterns that look real)
-                expect(source).not.toMatch(/\+1[2-9]\d{9}/) // Real US numbers
-                expect(source).not.toMatch(/[a-zA-Z0-9._%+-]+@(?!example\.com)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/) // Real emails (not example.com)
-            } catch {
-                // File may not exist, skip
-            }
+            const source = readFileSync(new URL(file, import.meta.url), 'utf-8')
+            // Should not contain real phone numbers (10+ digit patterns that look real)
+            expect(source).not.toMatch(/\+1[2-9]\d{9}/) // Real US numbers
+            expect(source).not.toMatch(/[a-zA-Z0-9._%+-]+@(?!example\.com)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/) // Real emails (not example.com)
         }
     })
 })
