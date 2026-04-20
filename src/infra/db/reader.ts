@@ -106,7 +106,7 @@ function executeMessageQuery(
         const rows = exec(sqlQuery.sql, sqlQuery.params)
         messages = rows.map((row) => rowToMessage(row, []))
     } catch (error) {
-        throw DatabaseError(`Failed to query messages: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to query messages: ${toErrorMessage(error)}`, error)
     }
 
     if (!includeAttachments) {
@@ -232,7 +232,7 @@ function runChatBackfillOnce(
             if (id != null) byRowId.set(id, row)
         }
     } catch (error) {
-        throw DatabaseError(`Failed to backfill chat info: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to backfill chat info: ${toErrorMessage(error)}`, error)
     }
 
     if (byRowId.size === 0) return messages
@@ -258,7 +258,7 @@ function queryChats(exec: QueryExecutor, queries: MessagesDbQueries, input: Chat
         const rows = exec(sqlQuery.sql, sqlQuery.params)
         return rows.map((row) => rowToChat(row))
     } catch (error) {
-        throw DatabaseError(`Failed to list chats: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to list chats: ${toErrorMessage(error)}`, error)
     }
 }
 
@@ -313,7 +313,7 @@ function batchGetAttachments(
                 }
             }
         } catch (error) {
-            throw DatabaseError(`Failed to query attachments: ${toErrorMessage(error)}`)
+            throw DatabaseError(`Failed to query attachments: ${toErrorMessage(error)}`, error)
         }
     }
 
@@ -330,6 +330,6 @@ function queryMaxRowId(exec: QueryExecutor, queries: MessagesDbQueries): number 
         const rows = exec(sql, params)
         return parseNumber(rows[0]?.max_id) ?? 0
     } catch (error) {
-        throw DatabaseError(`Failed to read max ROWID: ${toErrorMessage(error)}`)
+        throw DatabaseError(`Failed to read max ROWID: ${toErrorMessage(error)}`, error)
     }
 }

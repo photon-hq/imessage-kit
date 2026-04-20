@@ -213,10 +213,15 @@ export class MessageWatchSource {
 
     private ensureWatching(): void {
         this.attachWALWatcher()
-        if (!this.walWatcher) this.attachDirWatcher()
+        if (this.walWatcher) return
 
-        if (!this.walWatcher && !this.dirWatcher) {
-            throw new Error('Failed to start watcher: neither WAL file nor directory watch could be established')
+        try {
+            this.attachDirWatcher()
+        } catch (error) {
+            const cause = toError(error)
+            throw new Error(`Failed to start watcher: WAL missing and directory watch failed — ${cause.message}`, {
+                cause,
+            })
         }
     }
 
@@ -260,43 +265,35 @@ export class MessageWatchSource {
     private attachDirWatcher(): void {
         if (this.dirWatcher) return
 
-        try {
-            const dir = dirname(this.databasePath)
-            const watcher = this.watchFactory(dir, (_eventType, filename) => {
-                const name =
-                    typeof filename === 'string'
-                        ? filename
-                        : Buffer.isBuffer(filename)
-                          ? filename.toString('utf8')
-                          : null
+        const dir = dirname(this.databasePath)
+        const watcher = this.watchFactory(dir, (_eventType, filename) => {
+            const name =
+                typeof filename === 'string'
+                    ? filename
+                    : Buffer.isBuffer(filename)
+                      ? filename.toString('utf8')
+                      : null
 
-                if (name !== this.walFilename) return
+            if (name !== this.walFilename) return
 
-                // attachWALWatcher throws on non-ENOENT fs errors (EACCES,
-                // EMFILE, …). Route through handleError instead of letting
-                // the throw escape the fs.watch callback — that would
-                // surface as an uncaughtException and crash the host.
-                try {
-                    this.attachWALWatcher()
-                    this.trigger()
-                } catch (error) {
-                    this.handleError(error)
-                }
-            })
-
-            watcher.on('error', () => {
-                this.detachDirWatcher()
-                this.recoverOrStop('Directory watcher failed')
-            })
-
-            this.dirWatcher = watcher
-        } catch (error) {
-            // Dir watcher is the last fallback. Any failure here is fatal —
-            // let ensureWatching's null check surface it with context.
-            if (this.debug) {
-                console.warn('[WatchSource] Directory watcher attach failed:', toError(error))
+            // attachWALWatcher throws on non-ENOENT fs errors (EACCES,
+            // EMFILE, …). Route through handleError instead of letting
+            // the throw escape the fs.watch callback — that would
+            // surface as an uncaughtException and crash the host.
+            try {
+                this.attachWALWatcher()
+                this.trigger()
+            } catch (error) {
+                this.handleError(error)
             }
-        }
+        })
+
+        watcher.on('error', () => {
+            this.detachDirWatcher()
+            this.recoverOrStop('Directory watcher failed')
+        })
+
+        this.dirWatcher = watcher
     }
 
     private detachDirWatcher(): void {
