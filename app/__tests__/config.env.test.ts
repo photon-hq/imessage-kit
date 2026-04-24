@@ -5,10 +5,10 @@ describe('loadEnv', () => {
     it('parses a complete environment', () => {
         const env = loadEnv({
             GEMINI_API_KEY: 'g',
-            SPECTRUM_API_KEY: 's',
-            SPECTRUM_PROJECT_ID: 'p',
-            SPECTRUM_IMESSAGE_HANDLE: '+14155550123',
-            SPECTRUM_WEBHOOK_SECRET: 'w',
+            PHOTON_PROJECT_ID: 'p',
+            PHOTON_PROJECT_SECRET: 's',
+            PHOTON_IMESSAGE_HANDLE: '+14155550123',
+            PHOTON_WEBHOOK_SECRET: 'w',
             GOOGLE_SHEET_ID: 'sheet',
             GOOGLE_SERVICE_ACCOUNT_JSON: '{"type":"service_account"}',
             NODE_ENV: 'test',
@@ -21,10 +21,10 @@ describe('loadEnv', () => {
     it('throws when GEMINI_API_KEY is missing', () => {
         expect(() =>
             loadEnv({
-                SPECTRUM_API_KEY: 's',
-                SPECTRUM_PROJECT_ID: 'p',
-                SPECTRUM_IMESSAGE_HANDLE: '+14155550123',
-                SPECTRUM_WEBHOOK_SECRET: 'w',
+                PHOTON_PROJECT_ID: 'p',
+                PHOTON_PROJECT_SECRET: 's',
+                PHOTON_IMESSAGE_HANDLE: '+14155550123',
+                PHOTON_WEBHOOK_SECRET: 'w',
                 GOOGLE_SHEET_ID: 'sheet',
                 GOOGLE_SERVICE_ACCOUNT_JSON: '{}',
             } as Record<string, string>)
@@ -34,10 +34,10 @@ describe('loadEnv', () => {
     it('coerces PORT from string', () => {
         const env = loadEnv({
             GEMINI_API_KEY: 'g',
-            SPECTRUM_API_KEY: 's',
-            SPECTRUM_PROJECT_ID: 'p',
-            SPECTRUM_IMESSAGE_HANDLE: '+14155550123',
-            SPECTRUM_WEBHOOK_SECRET: 'w',
+            PHOTON_PROJECT_ID: 'p',
+            PHOTON_PROJECT_SECRET: 's',
+            PHOTON_IMESSAGE_HANDLE: '+14155550123',
+            PHOTON_WEBHOOK_SECRET: 'w',
             GOOGLE_SHEET_ID: 'sheet',
             GOOGLE_SERVICE_ACCOUNT_JSON: '{}',
             PORT: '8080',

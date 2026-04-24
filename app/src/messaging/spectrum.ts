@@ -38,22 +38,22 @@ export function createSpectrumAdapter(cfg: SpectrumConfig): MessageAdapter {
 
     return {
         async send(to, text) {
-            const res = await fetchImpl(`${baseUrl}/messages`, {
+            const basic = Buffer.from(`${cfg.projectId}:${cfg.apiKey}`).toString('base64')
+            const res = await fetchImpl(`${baseUrl}/projects/${cfg.projectId}/messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${cfg.apiKey}`,
-                    'X-Project-Id': cfg.projectId,
+                    Authorization: `Basic ${basic}`,
                 },
                 body: JSON.stringify({
                     channel: 'imessage',
-                    from: cfg.fromHandle,
+                    from: cfg.fromHandle || undefined,
                     to,
                     text,
                 }),
             })
             if (!res.ok) {
-                throw new Error(`Spectrum send failed: ${res.status} ${await res.text()}`)
+                throw new Error(`Photon send failed: ${res.status} ${await res.text()}`)
             }
         },
         parseInbound(rawBody, headers): InboundMessage | null {
