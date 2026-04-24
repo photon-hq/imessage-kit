@@ -20,6 +20,12 @@ A full-featured iMessage SDK for **reading**, **sending**, and **automating** iM
 
 ---
 
+## PennEats (example app)
+
+This repo also contains a reference application that uses `spectrum-ts` to build a Penn Dining iMessage agent. See [`app/`](./app) for the source and [`app/README.md`](./app/README.md) for dev setup.
+
+---
+
 ## Features
 
 | Feature | Method | Example |
