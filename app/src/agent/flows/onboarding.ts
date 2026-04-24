@@ -1,7 +1,7 @@
 import { findVenue } from '../../config/venues'
 import { addSchedule } from '../../db/schedules'
 import type { SheetsClient } from '../../db/sheets'
-import { updateUser, type User } from '../../db/users'
+import { type User, updateUser } from '../../db/users'
 import { pickPhrase } from '../prompts/phrases'
 
 export interface OnboardingDeps {
@@ -78,7 +78,9 @@ function parseDays(raw: string): DaySlot[] {
     const lower = raw.toLowerCase()
     const days = new Set<number>()
     for (const [tok, nums] of Object.entries(WEEKDAY_TOKENS)) {
-        if (new RegExp(`\\b${tok}\\b`).test(lower)) nums.forEach((n) => days.add(n))
+        if (new RegExp(`\\b${tok}\\b`).test(lower)) {
+            for (const n of nums) days.add(n)
+        }
     }
     if (days.size === 0) {
         for (const n of WEEKDAY_TOKENS.weekdays!) days.add(n)
@@ -87,7 +89,10 @@ function parseDays(raw: string): DaySlot[] {
     const meals: Array<{ label: string; hhmm: string }> = []
     for (const { label, pattern, defaultHhmm } of MEAL_LABEL_KEYWORDS) {
         if (pattern.test(lower)) {
-            const timeMatch = new RegExp(`${pattern.source}\\s*(?:at\\s*)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?`, 'i').exec(lower)
+            const timeMatch = new RegExp(
+                `${pattern.source}\\s*(?:at\\s*)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?`,
+                'i'
+            ).exec(lower)
             let hhmm = defaultHhmm
             if (timeMatch) {
                 let h = Number(timeMatch[1])
@@ -133,7 +138,10 @@ function parseDiet(raw: string): string[] {
         pescatarian: 'pescatarian',
     }
     const out = new Set<string>()
-    for (const tok of lower.split(/[,;]|\s+/).map((s) => s.trim()).filter(Boolean)) {
+    for (const tok of lower
+        .split(/[,;]|\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean)) {
         if (canonical[tok]) out.add(canonical[tok]!)
     }
     return [...out]
@@ -142,7 +150,7 @@ function parseDiet(raw: string): string[] {
 export async function handleOnboardingStep(
     deps: OnboardingDeps,
     user: User,
-    message: string,
+    message: string
 ): Promise<OnboardingResult> {
     const { client } = deps
 
@@ -182,8 +190,7 @@ export async function handleOnboardingStep(
             const slots = parseDays(message)
             if (slots.length === 0) return { reply: pickPhrase(user.handle, 'ask_days') }
             const preferred = (user.stateContext.preferredVenues as string[] | undefined) ?? ['*']
-            const venueForSchedule =
-                preferred.length === 1 && preferred[0] !== '*' ? preferred[0]! : 'auto'
+            const venueForSchedule = preferred.length === 1 && preferred[0] !== '*' ? preferred[0]! : 'auto'
             for (const slot of slots) {
                 await addSchedule(client, {
                     handle: user.handle,

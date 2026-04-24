@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
+import { handleOnboardingStep } from '../src/agent/flows/onboarding'
 import { bootstrap } from '../src/db/bootstrap'
 import { listSchedules } from '../src/db/schedules'
 import { createMemoryClient } from '../src/db/sheets'
 import { createUser, getUser } from '../src/db/users'
-import { handleOnboardingStep } from '../src/agent/flows/onboarding'
 
 async function setup(handle: string) {
     const client = createMemoryClient({ users: [], schedules: [], meal_events: [], knowledge: [] })
