@@ -1,0 +1,13 @@
+node_modules
+app/node_modules
+.git
+.env
+.env.*
+*.log
+docs
+scripts
+src
+__tests__
+app/__tests__
+agent
+dist
