@@ -37,7 +37,7 @@ export const VENUES: readonly Venue[] = [
     {
         id: 'falk-kosher',
         name: 'Falk Kosher',
-        bonAppetitSlug: 'falk-kosher-dining',
+        bonAppetitSlug: 'falk-dining-commons',
         address: '3200 Chestnut St',
         type: 'dining_hall',
         tags: ['kosher'],
