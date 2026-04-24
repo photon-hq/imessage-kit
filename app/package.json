@@ -1,0 +1,35 @@
+{
+    "name": "penneats",
+    "version": "2.0.0",
+    "private": true,
+    "type": "module",
+    "main": "./src/index.ts",
+    "scripts": {
+        "dev": "bun run --watch src/index.ts",
+        "start": "bun run src/index.ts",
+        "type-check": "tsc --noEmit",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "test": "bun test",
+        "test:watch": "bun test --watch"
+    },
+    "dependencies": {
+        "@google/genai": "^0.3.0",
+        "@hono/node-server": "^1.19.13",
+        "date-fns": "^4.1.0",
+        "date-fns-tz": "^3.2.0",
+        "googleapis": "^144.0.0",
+        "hono": "^4.12.12",
+        "spectrum-ts": "^0.9.0",
+        "zod": "^3.23.8"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^1.9.4",
+        "@types/bun": "^1.0.0",
+        "@types/node": "^20.0.0",
+        "typescript": "^5.3.0"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}
