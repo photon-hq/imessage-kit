@@ -20,13 +20,15 @@ The agent is a long-running service. The repo is public; the deployment is cloud
 |---|---|---|
 | iMessage I/O | `spectrum-ts` (cloud mode) | Photon's unified messaging SDK. Local mode for Mac dev. |
 | LLM | Gemini 2.5 Flash via `@google/genai` | Cheap enough for agentic scraping; kept from v1. |
-| DB | Supabase (Postgres) | Service-role client from the Node process; RLS on for public readable tables. |
+| DB | Google Sheets via `googleapis` service account | Keeps v1's pattern, zero infra to run; schema is PennEats-v2-specific (see §4). |
 | Runtime | Node.js ≥ 20, long-running process | Dockerfile. Deployable to Fly / Railway / Render / any VM. |
 | Tests | `bun test` (already in root repo) | Fixture-driven for scraper; mocks for Gemini in unit tests; live smoke tests gated behind `DESCRIBE_LIVE=1`. |
 | Lint/format | Biome (already configured) | — |
 | Package layout | New top-level `app/` directory. Retire `agent/`. | The root `src/` (the SDK itself) is untouched. |
 
-**Removed:** `@photon-ai/imessage-kit` runtime dependency for the agent, `googleapis`, Google Sheets, `service-account.json`.
+**Removed:** `@photon-ai/imessage-kit` runtime dependency for the agent. The v1 Sheets schema is fully replaced — not merged.
+
+**Kept from v1:** `googleapis`, service-account JSON auth pattern, the `SheetsClient` class shape (but with new tabs/columns).
 
 **Env vars:**
 ```
@@ -38,9 +40,11 @@ SPECTRUM_MODE=cloud          # "cloud" | "local"
 # Gemini
 GEMINI_API_KEY=AIza...
 
-# Supabase
-SUPABASE_URL=https://...supabase.co
-SUPABASE_SERVICE_ROLE_KEY=...
+# Google Sheets (v2 uses a fresh spreadsheet — don't reuse the v1 one)
+GOOGLE_SHEET_ID=...
+GOOGLE_SERVICE_ACCOUNT_PATH=./service-account.json
+# OR inline the JSON for container deploys:
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 
 # Optional
 TZ=America/New_York
@@ -59,14 +63,13 @@ app/
 │   ├── venues.ts                   # Penn venue catalog (15 halls, same set as v1)
 │   └── env.ts                      # Zod-validated env parsing
 ├── db/
-│   ├── client.ts                   # Supabase service-role client (singleton)
-│   ├── migrations/
-│   │   └── 0001_initial.sql        # Tables + indexes + RLS
+│   ├── sheets.ts                   # Google Sheets client (singleton), generalized tab reader/writer
+│   ├── bootstrap.ts                # Idempotent: creates missing tabs + writes headers on first boot
 │   └── repos/
-│       ├── users.ts                # profile + onboarding state CRUD
-│       ├── schedules.ts            # weekly recurring meal plan CRUD
-│       ├── events.ts               # meal_events (recommendations + followups)
-│       └── knowledge.ts            # daily_knowledge read/write
+│       ├── users.ts                # profile + onboarding state CRUD (users tab)
+│       ├── schedules.ts            # weekly recurring meal plan CRUD (user_schedules tab)
+│       ├── events.ts               # meal_events (recommendations + followups) tab
+│       └── knowledge.ts            # daily_knowledge tab read/write
 ├── agent/
 │   ├── run.ts                      # Gemini tool-calling loop
 │   ├── tools.ts                    # FunctionDeclarations + dispatcher
@@ -108,9 +111,9 @@ __tests__/
 │   ├── onboarding.test.ts
 │   └── inbound-router.test.ts
 ├── scheduler/
-│   └── tick.test.ts                            # Clock-driven, Supabase-mocked
+│   └── tick.test.ts                            # Clock-driven, Sheets-mocked
 └── db/
-    └── repos.test.ts                           # Against a real local Supabase instance
+    └── repos.test.ts                           # Against a real test Google Sheet
 
 docker/
 └── Dockerfile
@@ -120,84 +123,69 @@ docker/
 
 ## 4. Data model
 
-All DDL lives in `app/db/migrations/0001_initial.sql`. Applied via Supabase CLI or raw SQL on first deploy.
+Four tabs in a single Google Sheet (ID in `GOOGLE_SHEET_ID`). `app/db/bootstrap.ts` creates any missing tab and writes row-1 headers on first boot — so fresh deployments self-initialize.
 
-```sql
--- identity tied to iMessage handle (phone or email) — the only stable user ID
-create table users (
-  id             uuid primary key default gen_random_uuid(),
-  handle         text unique not null,     -- iMessage sender id, normalized
-  email          text,
-  name           text,
-  dietary        text[] not null default '{}',
-  timezone       text not null default 'America/New_York',
-  onboarding     text not null default 'awaiting_email',
-                 -- awaiting_email | awaiting_name | awaiting_halls
-                 -- | awaiting_schedule | awaiting_dietary | done
-  onboarding_ctx jsonb not null default '{}',
-  created_at     timestamptz not null default now(),
-  updated_at     timestamptz not null default now()
-);
-create index on users (handle);
+All IDs are `randomBytes(8).toString('hex')` — 16-char hex, same pattern as v1 followups. Cheap, collision-resistant enough at this scale, and easy to eyeball in the sheet.
 
--- recurring weekly meal plan
-create table user_schedules (
-  id              uuid primary key default gen_random_uuid(),
-  user_id         uuid not null references users(id) on delete cascade,
-  weekday         smallint not null check (weekday between 0 and 6),
-  meal_period     text not null,           -- Breakfast | Brunch | Lunch | Dinner | Late Night
-  target_time     time not null,           -- local time the user plans to eat
-  preferred_halls text[] not null default '{}',  -- ordered: most preferred first
-  unique (user_id, weekday, meal_period)
-);
-create index on user_schedules (weekday, target_time);
+### Tab: `users`
 
--- every recommendation the bot sent, for idempotency + followup linkage
-create table meal_events (
-  id              uuid primary key default gen_random_uuid(),
-  user_id         uuid not null references users(id) on delete cascade,
-  schedule_id     uuid references user_schedules(id) on delete set null,
-  date            date not null,
-  meal_period     text not null,
-  target_time     timestamptz not null,    -- absolute instant the user intended to eat
-  rec_sent_at     timestamptz,             -- when we sent the pre-meal recommendation
-  rec_payload     jsonb,                   -- {halls:[{hall,reason,highlights}], primaryPick}
-  chosen_hall     text,                    -- inferred from followup reply
-  followup_sent_at timestamptz,            -- when we sent "how was it?"
-  followup_reply  text,                    -- the user's raw followup reply
-  rating          smallint check (rating between 1 and 5),
-  status          text not null default 'scheduled',
-                 -- scheduled | recommended | followup_sent | done | skipped
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now(),
-  unique (user_id, date, meal_period)
-);
-create index on meal_events (status, target_time);
-create index on meal_events (user_id, status);
+Identity & onboarding state. One row per iMessage handle.
 
--- consolidated per-day public-interest knowledge base, read by every recommendation
-create table daily_knowledge (
-  id              uuid primary key default gen_random_uuid(),
-  date            date not null,
-  hall            text not null,
-  meal_period     text,
-  item            text,                    -- specific dish/station if mentioned
-  sentiment       smallint check (sentiment between 1 and 5),
-  note            text not null,           -- extracted public-interest claim
-  source_event_id uuid references meal_events(id) on delete set null,
-  created_at      timestamptz not null default now()
-);
-create index on daily_knowledge (date, hall);
-```
+| Column | A | B | C | D | E | F | G | H | I |
+|---|---|---|---|---|---|---|---|---|---|
+| Header | `id` | `handle` | `email` | `name` | `dietary` | `timezone` | `onboarding` | `onboarding_ctx` | `created_at` |
+| Type | hex16 | str | str | str | csv | str | enum | json | iso |
+| Example | `a1b2c3d4e5f60718` | `+12155550101` | `kyle@upenn.edu` | `Kyle` | `halal,peanuts` | `America/New_York` | `done` | `{}` | `2026-04-24T12:30:00Z` |
 
-### RLS
+`dietary` is a comma-separated list (Sheets doesn't have arrays). `onboarding` enum: `awaiting_email | awaiting_name | awaiting_halls | awaiting_schedule | awaiting_dietary | done`. `handle` is plaintext — the proactive rec flow requires being able to message the user back, so hashing (as v1 did) is impossible. Note in the README.
 
-- `users`, `user_schedules`, `meal_events`: **service-role only** (the Node process is the only client).
-- `daily_knowledge`: service-role write; **public read** allowed (so the knowledge DB is browsable; repo is public anyway). No PII in this table.
+### Tab: `user_schedules`
+
+Recurring weekly meal plan. One row per (user × weekday × meal_period).
+
+| Column | A | B | C | D | E | F |
+|---|---|---|---|---|---|---|
+| Header | `id` | `user_id` | `weekday` | `meal_period` | `target_time` | `preferred_halls` |
+| Type | hex16 | fk→users.id | 0-6 | enum | `HH:MM` | csv |
+| Example | `b2c3d4e5f6071829` | `a1b2c3d4e5f60718` | `1` | `Lunch` | `12:30` | `Hill House,1920 Commons` |
+
+`weekday` is 0 = Sunday … 6 = Saturday. `meal_period` ∈ `Breakfast | Brunch | Lunch | Dinner | Late Night`. Uniqueness `(user_id, weekday, meal_period)` is enforced in code (repo does read-then-write-or-update), not by Sheets.
+
+### Tab: `meal_events`
+
+Every recommendation + followup lifecycle. The `(user_id, date, meal_period)` tuple is the idempotency key — repo helper `upsertByMealKey` gates on it.
+
+| Column | A | B | C | D | E | F | G | H | I | J | K | L | M |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Header | `id` | `user_id` | `schedule_id` | `date` | `meal_period` | `target_time_iso` | `rec_sent_at` | `rec_payload_json` | `chosen_hall` | `followup_sent_at` | `followup_reply` | `rating` | `status` |
+| Example | `c3d4…` | `a1b2…` | `b2c3…` | `2026-04-24` | `Lunch` | `2026-04-24T16:30:00Z` | `2026-04-24T16:10:02Z` | `{"primaryPick":"Hill House",…}` | `Hill House` | `2026-04-24T16:40:03Z` | `mac was great` | `5` | `done` |
+
+`status` enum: `scheduled | recommended | followup_sent | done | skipped`. Empty cells = null.
+
+### Tab: `daily_knowledge`
+
+Consolidated per-day public-interest facts. Read by every recommendation via `knowledge.getForDate(date, halls)`. **Only written** when Gemini's `save_daily_knowledge` tool judges a fact publicly useful (per the system prompt's filter).
+
+| Column | A | B | C | D | E | F | G | H |
+|---|---|---|---|---|---|---|---|---|
+| Header | `id` | `date` | `hall` | `meal_period` | `item` | `sentiment` | `note` | `source_event_id` |
+| Example | `d4e5…` | `2026-04-24` | `Hill House` | `Lunch` | `mac and cheese` | `5` | `mac was great today` | `c3d4…` |
+
+`item`, `meal_period`, `sentiment` are optional. `note` is the only required free-text field.
+
+### Query access patterns
+
+Because Sheets has no indexes, every read is an O(n) scan of the tab. The `SheetsClient` caches each tab's rows for `CACHE_TTL_MS = 15000` (15s) to absorb the scheduler's 60s tick + burst inbound messages without hammering the API. Writes invalidate the cache for the written tab.
+
+Expected sizes at 100 active users after 1 year: `users` ≤ 100 rows, `user_schedules` ≤ ~1,000 rows, `meal_events` ≤ ~100,000 rows, `daily_knowledge` ≤ ~20,000 rows. Sheets handles this comfortably (cell limit is 10M per sheet). If `meal_events` grows past that, archive old months to a separate tab.
+
+### Concurrency
+
+Single Node process = no concurrent writers. The 60s scheduler and inbound message handler run in the same event loop; per-sender message queues (carried over from v1) serialize ops per user. The "claim the window" pattern (insert meal_events row first, then send) prevents duplicate sends even across process restarts, because we check-then-insert and Sheets appends are ordered.
 
 ### Handle privacy
 
-v1 hashed phone numbers via SHA-256 and relied on an out-of-band `phoneMap` to restore them on restart — this made the proactive recommendation flow impossible because we can't message a hash. v2 stores handles in plaintext, under RLS, with service-role-only access. A note in the README calls this out: the handle is plaintext because the bot needs to message you back.
+v1 hashed phone numbers via SHA-256 and relied on an out-of-band `phoneMap` to restore them on restart — this made the proactive recommendation flow impossible because we can't message a hash. v2 stores handles in plaintext in the `users` tab. Sheet access is restricted by the service-account share permission (you only share it with the service account's email — no one else can read it). The README must call this out: the handle is plaintext because the bot needs to message the user back, and the Sheet must not be shared publicly.
 
 ---
 
@@ -282,58 +270,67 @@ function pickPhrase(pool: readonly string[], userId: string, step: string): stri
 
 ## 7. Scheduler
 
-One `setInterval(SCHEDULER_TICK_MS)` loop (60s default) in `scheduler/tick.ts`. Each tick does two queries in parallel:
+One `setInterval(SCHEDULER_TICK_MS)` loop (60s default) in `scheduler/tick.ts`. Each tick runs three passes. With Sheets as the DB, the queries are just in-memory filters on freshly-fetched rows (one read per tab per tick, served by the 15s cache).
+
+All weekday / time math is computed in `America/New_York` (the canonical user timezone for v2).
 
 ### 7a. Due recommendations
 
-`$today_weekday` and `$now_*` are computed in `America/New_York` (the canonical user timezone for v2).
+```ts
+// Pseudocode
+const now = nowNY()
+const weekday = now.getDay()
+const windowStart = addMinutes(now, 19)
+const windowEnd = addMinutes(now, 21)
+const today = dateString(now)  // "2026-04-24"
 
-```sql
--- Users whose next scheduled meal starts in 19–21 minutes from now
--- AND either no meal_events row exists yet, OR a prior tick inserted a row but
--- the send crashed before completion (status='scheduled' AND rec_sent_at IS NULL)
-select u.id, u.handle, u.dietary, s.id as schedule_id,
-       s.meal_period, s.preferred_halls, s.target_time,
-       e.id as existing_event_id
-from user_schedules s
-join users u on u.id = s.user_id
-left join meal_events e
-  on e.user_id = u.id and e.date = $today and e.meal_period = s.meal_period
-where u.onboarding = 'done'
-  and s.weekday = $today_weekday
-  and s.target_time between $now_plus_19min_local and $now_plus_21min_local
-  and (
-    e.id is null
-    or (e.status = 'scheduled' and e.rec_sent_at is null)
-  );
+const users = await users.all()
+const schedules = await schedules.all()
+const events = await events.forDate(today)
+
+const due = schedules
+  .filter(s => s.weekday === weekday)
+  .filter(s => timeInWindow(s.target_time, now, windowStart, windowEnd))
+  .map(s => ({
+    schedule: s,
+    user: users.find(u => u.id === s.user_id && u.onboarding === 'done'),
+    existing: events.find(e => e.user_id === s.user_id && e.meal_period === s.meal_period),
+  }))
+  .filter(row => row.user && (
+    !row.existing
+    || (row.existing.status === 'scheduled' && !row.existing.rec_sent_at)
+  ))
 ```
 
-For each row:
-1. If `existing_event_id IS NULL`: insert `meal_events (user_id, schedule_id, date, meal_period, target_time, status='scheduled')` — the `unique (user_id, date, meal_period)` constraint makes the insert racelessly atomic.
-2. Call `flows/recommend.ts`. On success it updates the row to `status='recommended'`, `rec_sent_at=now()`, `rec_payload=…`. On failure it leaves the row at `status='scheduled', rec_sent_at=NULL` — a subsequent tick picks it up again via the second `OR` branch above.
-3. Retry limit: if `target_time` has passed and the row is still `scheduled`, the scheduler sets `status='skipped'` rather than sending a now-stale rec.
+For each due row:
+1. If `existing` is `null`: append a new `meal_events` row with `status='scheduled'`, `target_time` = today + `schedule.target_time` in NY tz.
+2. Call `flows/recommend.ts`. On success it updates the row to `status='recommended'`, `rec_sent_at=now()`, `rec_payload=…`. On failure it leaves the row at `status='scheduled', rec_sent_at=null` — a subsequent tick picks it up again via the second branch of the filter.
+3. Retry limit: section 7c handles stale rows.
+
+The append happens *before* the send, so a crash mid-send leaves a row behind that the next tick will pick up. Because Sheets appends are strictly ordered and we have a single process, the "claim the window" semantics hold without a real unique constraint — the filter's `!row.existing` check is enough.
 
 ### 7b. Due followups
 
-```sql
--- Events where meal started 10-30 min ago and followup not yet sent
-select * from meal_events
-where status = 'recommended'
-  and target_time between now() - interval '30 min' and now() - interval '10 min'
-  and followup_sent_at is null;
+```ts
+const followupDue = events.filter(e =>
+  e.status === 'recommended'
+  && !e.followup_sent_at
+  && minutesSince(e.target_time_iso) >= 10
+  && minutesSince(e.target_time_iso) <= 30
+)
 ```
 
 For each: `flows/followup.ts` sends the "how was it?" probe → `status='followup_sent'`, `followup_sent_at=now()`.
 
 ### 7c. Stale-row cleanup
 
-```sql
--- Recommendations that never went out because the pre-meal window passed
-update meal_events
-set status = 'skipped', updated_at = now()
-where status = 'scheduled'
-  and rec_sent_at is null
-  and target_time < now() - interval '5 min';
+```ts
+const stale = events.filter(e =>
+  e.status === 'scheduled'
+  && !e.rec_sent_at
+  && minutesSince(e.target_time_iso) > 5
+)
+for (const e of stale) await events.updateStatus(e.id, 'skipped')
 ```
 
 Runs at the end of each tick. Prevents stale `scheduled` rows from accumulating and stops the scheduler from sending "heading to lunch in 20 min" after lunch has already started.
@@ -510,20 +507,86 @@ TDD order: write the `pickDaypart` tests + implementation, then the extractor te
 
 ## 12. Deployment
 
+### Prereqs
+
+**Photon iMessage provisioning** (API-only, no dashboard button exists):
+```bash
+# Base URL: https://spectrum.photon.codes (hard-coded in spectrum-ts; override with SPECTRUM_CLOUD_URL).
+
+# 1. Enable iMessage platform (note the trailing slash — the path is /platforms/)
+curl -X PATCH "https://spectrum.photon.codes/projects/$PHOTON_PROJECT_ID/platforms/" \
+  -u "$PHOTON_PROJECT_ID:$PHOTON_PROJECT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"imessage","enabled":true}'
+# → {"succeed":true,"data":{}}
+
+# 2. Verify it's enabled
+curl -u "$PHOTON_PROJECT_ID:$PHOTON_PROJECT_SECRET" \
+  "https://spectrum.photon.codes/projects/$PHOTON_PROJECT_ID/platforms/"
+
+# 3. Fetch iMessage info (shared vs dedicated, line details)
+curl -u "$PHOTON_PROJECT_ID:$PHOTON_PROJECT_SECRET" \
+  "https://spectrum.photon.codes/projects/$PHOTON_PROJECT_ID/imessage/"
+```
+
+If the project is `shared`, spectrum-ts cloud mode uses Photon's shared line — ready to go. If `dedicated`, email `hello@photon.codes` to get lines assigned.
+
+Quota to watch: **50 new conversations initiated per line per day** (from advanced-kits docs). Replies within existing conversations don't count, so the proactive rec flow is fine as long as users text in first.
+
+**Google Sheets bootstrap**:
+1. Create a new Google Sheet. Copy its ID from the URL.
+2. Create a Google Cloud project → enable the **Google Sheets API** → IAM → Service Accounts → create → Keys → JSON → download.
+3. Share the sheet with the service account's `client_email` as **Editor**.
+4. On first boot, `app/db/bootstrap.ts` creates the 4 tabs (`users`, `user_schedules`, `meal_events`, `daily_knowledge`) and writes row-1 headers if they don't exist. No manual schema work.
+
+**Note:** v1's spreadsheet has a different schema — do NOT reuse it. Create a fresh Sheet for v2.
+
+### Dockerfile
+
 `docker/Dockerfile`:
 ```dockerfile
-FROM oven/bun:1 AS base
+FROM oven/bun:1-alpine
 WORKDIR /app
-COPY app/ /app/
-RUN bun install --production
+COPY app/package.json app/bun.lockb ./
+RUN bun install --production --frozen-lockfile
+COPY app/ ./
 CMD ["bun", "run", "index.ts"]
 ```
 
-Platforms: Fly.io (recommended — long-running processes, simple Dockerfile deploy), Railway, Render, or any VM. `README.md` for `app/` lists Fly setup steps.
+### Fly.io (recommended)
 
-Supabase migrations applied via `supabase db push` or manual SQL once.
+```toml
+# fly.toml
+app = "penneats"
+primary_region = "iad"
+[build]
+  dockerfile = "docker/Dockerfile"
+[http_service]
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+```
 
-**NOT Vercel.** Vercel serverless functions can't hold a long-running message stream or a `setInterval` scheduler.
+```bash
+fly apps create penneats
+fly secrets set \
+  PHOTON_PROJECT_ID=... \
+  PHOTON_PROJECT_SECRET=... \
+  GEMINI_API_KEY=... \
+  GOOGLE_SHEET_ID=... \
+  GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)" \
+  TZ=America/New_York
+fly deploy
+fly logs
+```
+
+Using `GOOGLE_SERVICE_ACCOUNT_JSON` (full JSON inlined as an env var) avoids baking the service-account file into the image. `app/db/sheets.ts` prefers this env over `GOOGLE_SERVICE_ACCOUNT_PATH` when both are set.
+
+**Alternatives:** Railway, Render, any VPS with Docker. **NOT Vercel / Lambda / Cloudflare Workers** — the scheduler and Spectrum message stream both need persistent compute.
 
 ---
 
@@ -546,7 +609,7 @@ Out of scope for v2:
 
 **Keep:**
 - Root `src/` — the SDK itself stays as-is; still published as `@photon-ai/imessage-kit`.
-- `README.md` — rewrite the "Example: PennEats" section to reflect v2 (new architecture, Supabase, spectrum-ts, deploy instructions).
+- `README.md` — rewrite the "Example: PennEats" section to reflect v2 (new architecture, Google Sheets v2 schema, spectrum-ts, deploy instructions).
 - `examples/`, `__tests__/` for the root SDK — untouched.
 
 **Add:**
@@ -562,8 +625,9 @@ The implementation is complete when:
 
 1. `bun test` passes — all scraper, flow, and repo tests green.
 2. `DESCRIBE_LIVE=1 bun test __tests__/scraper/live.test.ts` passes against live Bon Appétit pages.
-3. A fresh user can text the bot, complete onboarding in ≤ 5 messages, and see their row in `users` + `user_schedules`.
-4. A scheduled user receives an unsolicited recommendation 20±1 min before a configured meal.
-5. Ten minutes after `target_time`, the bot sends a follow-up; the reply is saved to `meal_events` and `daily_knowledge` when public-interest content is present.
-6. The Dockerfile builds and runs locally with all env vars set.
-7. `README.md` PennEats section reflects the new architecture.
+3. A fresh Google Sheet, shared with the service account, auto-populates all four tabs with headers on first run.
+4. A fresh user can text the bot, complete onboarding in ≤ 5 messages, and see their row in the `users` + `user_schedules` tabs.
+5. A scheduled user receives an unsolicited recommendation 20±1 min before a configured meal.
+6. Ten minutes after `target_time`, the bot sends a follow-up; the reply is saved to `meal_events` and `daily_knowledge` when public-interest content is present.
+7. The Dockerfile builds and runs locally with all env vars set, and a `fly deploy` to a fresh Fly app succeeds.
+8. `README.md` PennEats section reflects the new architecture, including the Photon `PATCH /platforms` provisioning step.
