@@ -28,14 +28,14 @@ export const TAB_HEADERS = {
         'user_reply',
     ],
     knowledge: ['id', 'date', 'venue_id', 'meal_label', 'item', 'tags', 'created_at'],
-} as const
+} satisfies Record<string, string[]>
 
 export async function bootstrap(client: SheetsClient): Promise<void> {
     for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
         await client.ensureTab(tab)
         const rows = await client.get(`${tab}!A:Z`)
         if (rows.length === 0) {
-            await client.append(`${tab}!A:Z`, [headers as string[]])
+            await client.append(`${tab}!A:Z`, [headers])
             continue
         }
         const existing = rows[0]!

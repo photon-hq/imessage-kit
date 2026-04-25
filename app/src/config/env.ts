@@ -4,8 +4,6 @@ const envSchema = z.object({
     GEMINI_API_KEY: z.string().min(1),
     PHOTON_PROJECT_ID: z.string().min(1),
     PHOTON_PROJECT_SECRET: z.string().min(1),
-    PHOTON_IMESSAGE_HANDLE: z.string().default(''),
-    PHOTON_WEBHOOK_SECRET: z.string().min(1),
     GOOGLE_SHEET_ID: z.string().min(1),
     GOOGLE_SERVICE_ACCOUNT_JSON: z.string().min(1),
     PORT: z.coerce.number().int().positive().default(3000),
@@ -16,8 +14,6 @@ export interface Env {
     geminiApiKey: string
     spectrumApiKey: string
     spectrumProjectId: string
-    spectrumImessageHandle: string
-    spectrumWebhookSecret: string
     googleSheetId: string
     googleServiceAccountJson: string
     port: number
@@ -36,8 +32,6 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
         geminiApiKey: e.GEMINI_API_KEY,
         spectrumApiKey: e.PHOTON_PROJECT_SECRET,
         spectrumProjectId: e.PHOTON_PROJECT_ID,
-        spectrumImessageHandle: e.PHOTON_IMESSAGE_HANDLE,
-        spectrumWebhookSecret: e.PHOTON_WEBHOOK_SECRET,
         googleSheetId: e.GOOGLE_SHEET_ID,
         googleServiceAccountJson: e.GOOGLE_SERVICE_ACCOUNT_JSON,
         port: e.PORT,

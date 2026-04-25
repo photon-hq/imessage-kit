@@ -1,6 +1,8 @@
 import { serve } from '@hono/node-server'
-import { createTidbitClient } from './agent/extractTidbits'
+import { Hono } from 'hono'
 import { GoogleGenAI, Type, type FunctionDeclaration, type Part } from '@google/genai'
+import { routeInbound } from './agent/router'
+import { createTidbitClient } from './agent/extractTidbits'
 import type { AgentFunctionCall, AgentGeminiClient, AgentStepContext } from './agent/runAgent'
 import { loadEnv } from './config/env'
 import { bootstrap } from './db/bootstrap'
@@ -9,7 +11,6 @@ import { createSpectrumAdapter } from './messaging/spectrum'
 import { runTick } from './scheduler/tick'
 import { createGeminiClient, getVenueMenu } from './scraper'
 import type { VenueMenu } from './scraper/types'
-import { buildWebhookApp } from './webhook'
 
 export const VERSION = '2.0.0'
 
@@ -76,7 +77,7 @@ function createGeminiAgentClient(apiKey: string, model = 'gemini-2.5-flash'): Ag
             })
             const parts: Part[] = response.candidates?.[0]?.content?.parts ?? []
             const calls: AgentFunctionCall[] = []
-            let text = ''
+            let textOut = ''
             for (const p of parts) {
                 if (p.functionCall) {
                     calls.push({
@@ -84,10 +85,10 @@ function createGeminiAgentClient(apiKey: string, model = 'gemini-2.5-flash'): Ag
                         args: (p.functionCall.args ?? {}) as AgentFunctionCall['args'],
                     })
                 } else if (p.text) {
-                    text += p.text
+                    textOut += p.text
                 }
             }
-            return { text, functionCalls: calls }
+            return { text: textOut, functionCalls: calls }
         },
     }
 }
@@ -104,15 +105,14 @@ async function main(): Promise<void> {
     const agentClient = createGeminiAgentClient(env.geminiApiKey)
     const tidbitClient = createTidbitClient(env.geminiApiKey)
 
-    const adapter = createSpectrumAdapter({
-        apiKey: env.spectrumApiKey,
+    const adapter = await createSpectrumAdapter({
         projectId: env.spectrumProjectId,
-        fromHandle: env.spectrumImessageHandle,
-        webhookSecret: env.spectrumWebhookSecret,
+        projectSecret: env.spectrumApiKey,
     })
+    console.log('[penneats] spectrum connected')
 
-    const app = buildWebhookApp({ client, adapter, geminiClient: agentClient, tidbitClient })
-
+    const app = new Hono()
+    app.get('/healthz', (c) => c.json({ ok: true }))
     const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
         console.log(`[penneats] listening on :${info.port}`)
     })
@@ -128,9 +128,39 @@ async function main(): Promise<void> {
         }
     }, 60_000)
 
+    const consumeInbound = async (): Promise<void> => {
+        for await (const [space, msg] of adapter.instance.messages) {
+            if (msg.content.type !== 'text') continue
+            const handle = msg.sender.id
+            const body = msg.content.text
+            try {
+                const reply = await routeInbound({
+                    client,
+                    rawHandle: handle,
+                    text: body,
+                    geminiClient: agentClient,
+                    tidbitClient,
+                })
+                if (reply) await space.send(reply)
+            } catch (err) {
+                console.error('[penneats] inbound error:', err instanceof Error ? err.message : err)
+                try {
+                    await space.send('Sorry, something went wrong — try again in a moment.')
+                } catch {
+                    // already logged
+                }
+            }
+        }
+    }
+    void consumeInbound().catch((err) => {
+        console.error('[penneats] message stream ended:', err instanceof Error ? err.message : err)
+        process.exit(1)
+    })
+
     const shutdown = async (signal: string) => {
         console.log(`[penneats] ${signal} received, shutting down`)
         clearInterval(tickInterval)
+        await adapter.stop().catch(() => {})
         server.close()
         process.exit(0)
     }
