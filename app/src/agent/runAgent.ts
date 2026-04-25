@@ -38,19 +38,23 @@ export interface RunAgentInput {
     text: string
     geminiClient: AgentGeminiClient
     fetchMenu?: FetchMenu
+    priorHistory?: HistoryTurn[]
 }
 
 const MAX_ITERS = 6
 
 export async function runAgent(input: RunAgentInput): Promise<string> {
-    const { client, user, text, geminiClient, fetchMenu } = input
+    const { client, user, text, geminiClient, fetchMenu, priorHistory } = input
     const systemPrompt = buildSystemPrompt({
         now: new Date(),
         user: user
             ? { name: user.name, dietaryRestrictions: user.dietaryRestrictions }
             : undefined,
     })
-    const history: HistoryTurn[] = [{ role: 'user', content: text }]
+    const history: HistoryTurn[] = [
+        ...(priorHistory ?? []),
+        { role: 'user', content: text },
+    ]
 
     for (let i = 0; i < MAX_ITERS; i++) {
         const response = await geminiClient.step({ systemPrompt, history })

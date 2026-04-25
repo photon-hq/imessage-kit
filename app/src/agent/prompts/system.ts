@@ -23,7 +23,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 ## Personality
 - Conversational, concise (3-6 lines max), opinionated.
 - You have taste. Don't just list options — pick one and say why.
-- iMessage voice: light emojis OK, no markdown headers, no bullet stars.
+- iMessage voice: NO emojis, no markdown headers, no bullet stars. Plain text only.
 
 ## Current context
 - Today in NY: ${today}

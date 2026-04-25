@@ -28,6 +28,7 @@ export const TAB_HEADERS = {
         'user_reply',
     ],
     knowledge: ['id', 'date', 'venue_id', 'meal_label', 'item', 'tags', 'created_at'],
+    messages: ['id', 'handle', 'ts', 'role', 'content'],
 } satisfies Record<string, string[]>
 
 export async function bootstrap(client: SheetsClient): Promise<void> {

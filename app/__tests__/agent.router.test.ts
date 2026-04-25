@@ -74,6 +74,42 @@ describe('routeInbound', () => {
         expect(reply).toBe('free text reply')
     })
 
+    it('passes prior conversation turns into runAgent and persists new ones', async () => {
+        const client = await setup()
+        await createUser(client, { handle: '+14155550123' })
+        await updateUser(client, '+14155550123', { state: 'active', onboardingStep: 'done' })
+
+        let captured: { historyLen: number; firstText: string } | null = null
+        const recordingClient: AgentGeminiClient = {
+            async step(ctx) {
+                captured = {
+                    historyLen: ctx.history.length,
+                    firstText: ctx.history[0]?.content ?? '',
+                }
+                return { text: 'pong', functionCalls: [] }
+            },
+        }
+
+        await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: 'first ping',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        expect(captured?.historyLen).toBe(1)
+
+        await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: 'second ping',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        expect(captured?.historyLen).toBe(3)
+        expect(captured?.firstText).toBe('first ping')
+    })
+
     it('routes a reply to a recently post-sent meal as a followup', async () => {
         const client = await setup()
         await createUser(client, { handle: '+14155550123' })
