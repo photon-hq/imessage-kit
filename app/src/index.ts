@@ -105,17 +105,19 @@ async function main(): Promise<void> {
     const agentClient = createGeminiAgentClient(env.geminiApiKey)
     const tidbitClient = createTidbitClient(env.geminiApiKey)
 
-    const adapter = await createSpectrumAdapter({
-        projectId: env.spectrumProjectId,
-        projectSecret: env.spectrumApiKey,
-    })
-    console.log('[penneats] spectrum connected')
-
+    // Bind HTTP server before slow async operations so health checks pass
     const app = new Hono()
     app.get('/healthz', (c) => c.json({ ok: true }))
     const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
         console.log(`[penneats] listening on :${info.port}`)
     })
+
+    console.log('[penneats] connecting to spectrum...')
+    const adapter = await createSpectrumAdapter({
+        projectId: env.spectrumProjectId,
+        projectSecret: env.spectrumApiKey,
+    })
+    console.log('[penneats] spectrum connected')
 
     const fetchMenu = async (venueId: string, date: string): Promise<VenueMenu> =>
         getVenueMenu(venueId, date, { client: menuClient })
