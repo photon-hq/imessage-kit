@@ -79,10 +79,10 @@ describe('routeInbound', () => {
         await createUser(client, { handle: '+14155550123' })
         await updateUser(client, '+14155550123', { state: 'active', onboardingStep: 'done' })
 
-        let captured: { historyLen: number; firstText: string } | null = null
+        const captured: { value: { historyLen: number; firstText: string } | null } = { value: null }
         const recordingClient: AgentGeminiClient = {
             async step(ctx) {
-                captured = {
+                captured.value = {
                     historyLen: ctx.history.length,
                     firstText: ctx.history[0]?.content ?? '',
                 }
@@ -97,7 +97,7 @@ describe('routeInbound', () => {
             geminiClient: recordingClient,
             tidbitClient: tidbitStub,
         })
-        expect(captured?.historyLen).toBe(1)
+        expect(captured.value?.historyLen).toBe(1)
 
         await routeInbound({
             client,
@@ -106,8 +106,8 @@ describe('routeInbound', () => {
             geminiClient: recordingClient,
             tidbitClient: tidbitStub,
         })
-        expect(captured?.historyLen).toBe(3)
-        expect(captured?.firstText).toBe('first ping')
+        expect(captured.value?.historyLen).toBe(3)
+        expect(captured.value?.firstText).toBe('first ping')
     })
 
     it('routes a reply to a recently post-sent meal as a followup', async () => {

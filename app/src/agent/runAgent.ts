@@ -68,6 +68,10 @@ export async function runAgent(input: RunAgentInput): Promise<string> {
         })
         for (const call of response.functionCalls) {
             const result = await executeTool(call.name, call.args, { client, user, fetchMenu })
+            const preview = result.replace(/\s+/g, ' ').slice(0, 120)
+            console.log(
+                `[agent] tool=${call.name} args=${JSON.stringify(call.args)} -> ${preview}`,
+            )
             history.push({ role: 'tool', content: result, toolName: call.name })
         }
     }

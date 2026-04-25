@@ -9,7 +9,7 @@ import { bootstrap } from './db/bootstrap'
 import { createGoogleSheetsClient } from './db/sheets'
 import { createSpectrumAdapter } from './messaging/spectrum'
 import { runTick } from './scheduler/tick'
-import { createGeminiClient, getVenueMenu } from './scraper'
+import { getVenueMenu } from './scraper'
 import type { VenueMenu } from './scraper/types'
 
 export const VERSION = '2.0.0'
@@ -123,7 +123,6 @@ async function main(): Promise<void> {
         console.log(`[penneats] listening on :${info.port}`)
     })
 
-    const menuClient = createGeminiClient(env.geminiApiKey)
     const agentClient = createGeminiAgentClient(env.geminiApiKey)
     const tidbitClient = createTidbitClient(env.geminiApiKey)
 
@@ -136,7 +135,7 @@ async function main(): Promise<void> {
         console.log('[penneats] sheets bootstrapped')
 
         const fetchMenu = async (venueId: string, date: string): Promise<VenueMenu> =>
-            getVenueMenu(venueId, date, { client: menuClient })
+            getVenueMenu(venueId, date)
 
         tickInterval = setInterval(async () => {
             if (!adapter) return
@@ -159,7 +158,9 @@ async function main(): Promise<void> {
                 if (msg.content.type !== 'text') continue
                 const handle = msg.sender.id
                 const body = msg.content.text
+                const tail = handle.slice(-4)
                 try {
+                    console.log(`[inbound] ...${tail} <- ${body.slice(0, 80)}`)
                     const reply = await routeInbound({
                         client,
                         rawHandle: handle,
@@ -168,7 +169,10 @@ async function main(): Promise<void> {
                         tidbitClient,
                         fetchMenu,
                     })
-                    if (reply) await space.send(reply)
+                    if (reply) {
+                        console.log(`[inbound] ...${tail} -> ${reply.slice(0, 80)}`)
+                        await space.send(reply)
+                    }
                 } catch (err) {
                     console.error('[penneats] inbound error:', err instanceof Error ? err.message : err)
                     try {

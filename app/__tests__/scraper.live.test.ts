@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'bun:test'
-import { createGeminiClient, getVenueMenu } from '../src/scraper'
+import { getVenueMenu } from '../src/scraper'
 
 const LIVE = process.env.DESCRIBE_LIVE === '1'
-const GEMINI_KEY = process.env.GEMINI_API_KEY
-
-const describeLive = LIVE && GEMINI_KEY ? describe : describe.skip
+const describeLive = LIVE ? describe : describe.skip
 
 describeLive('live scraper (DESCRIBE_LIVE=1)', () => {
     it(
         'fetches a real 1920-commons menu for today',
         async () => {
             const today = new Date().toISOString().slice(0, 10)
-            const client = createGeminiClient(GEMINI_KEY!)
-            const menu = await getVenueMenu('1920-commons', today, { client })
+            const menu = await getVenueMenu('1920-commons', today)
             console.log(`[live] ${menu.venueName} ${menu.date}: ${menu.dayparts.length} dayparts`)
             expect(menu.venueId).toBe('1920-commons')
             expect(Array.isArray(menu.dayparts)).toBe(true)
