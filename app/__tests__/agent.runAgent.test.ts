@@ -45,6 +45,51 @@ describe('executeTool', () => {
         const out = await executeTool('not_a_tool', {}, { client, user: null })
         expect(out.toLowerCase()).toContain('unknown')
     })
+
+    it('get_venue_menu summarizes via fetchMenu', async () => {
+        const client = await setup()
+        const out = await executeTool(
+            'get_venue_menu',
+            { venueId: 'hill-house', mealLabel: 'Dinner' },
+            {
+                client,
+                user: null,
+                async fetchMenu(venueId, date) {
+                    return {
+                        venueId,
+                        venueName: 'Hill House',
+                        date,
+                        fetchedAt: new Date().toISOString(),
+                        dayparts: [
+                            {
+                                label: 'Dinner',
+                                startIso: '2026-04-24T22:00:00.000Z',
+                                endIso: '2026-04-25T01:00:00.000Z',
+                                stations: [
+                                    {
+                                        name: 'Grill',
+                                        items: [{ name: 'cheeseburger', tags: [] }],
+                                    },
+                                ],
+                            },
+                        ],
+                    }
+                },
+            },
+        )
+        expect(out).toContain('Hill House')
+        expect(out).toContain('cheeseburger')
+    })
+
+    it('get_venue_menu errors when fetchMenu missing', async () => {
+        const client = await setup()
+        const out = await executeTool(
+            'get_venue_menu',
+            { venueId: 'hill-house' },
+            { client, user: null },
+        )
+        expect(out.toLowerCase()).toContain('not available')
+    })
 })
 
 describe('runAgent', () => {

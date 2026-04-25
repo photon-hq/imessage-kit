@@ -47,6 +47,37 @@ describe('onboarding', () => {
         expect(u3.onboardingStep).toBe('ask_email')
     })
 
+    it('captures venue list from a messy free-text answer', async () => {
+        const client = await setup(HANDLE)
+        let u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'hi')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'Alice')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'alice@upenn.edu')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'mostly hill but sometimes 1920 or mcc')
+        u = (await getUser(client, HANDLE))!
+        const preferred = u.stateContext.preferredVenues as string[]
+        expect(preferred).toContain('hill-house')
+        expect(preferred).toContain('1920-commons')
+        expect(preferred).toContain('mcclelland-express')
+    })
+
+    it('treats "all of them" as wildcard', async () => {
+        const client = await setup(HANDLE)
+        let u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'hi')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'Alice')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'alice@upenn.edu')
+        u = (await getUser(client, HANDLE))!
+        await handleOnboardingStep({ client }, u, 'all of them')
+        u = (await getUser(client, HANDLE))!
+        expect(u.stateContext.preferredVenues).toEqual(['*'])
+    })
+
     it('advances through days → diet → done and creates schedules', async () => {
         const client = await setup(HANDLE)
         let u = (await getUser(client, HANDLE))!

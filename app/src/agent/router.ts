@@ -6,7 +6,7 @@ import { normalizeHandle } from '../lib/handle'
 import { extractTidbits, type TidbitGeminiClient } from './extractTidbits'
 import { ingestFollowupReply } from './flows/followup'
 import { handleOnboardingStep } from './flows/onboarding'
-import { runAgent, type AgentGeminiClient } from './runAgent'
+import { runAgent, type AgentGeminiClient, type FetchMenu } from './runAgent'
 
 export interface RouteInput {
     client: SheetsClient
@@ -14,10 +14,11 @@ export interface RouteInput {
     text: string
     geminiClient: AgentGeminiClient
     tidbitClient: TidbitGeminiClient
+    fetchMenu?: FetchMenu
 }
 
 export async function routeInbound(input: RouteInput): Promise<string> {
-    const { client, rawHandle, text, geminiClient, tidbitClient } = input
+    const { client, rawHandle, text, geminiClient, tidbitClient, fetchMenu } = input
     const handle = normalizeHandle(rawHandle)
 
     let user = await getUser(client, handle)
@@ -44,5 +45,5 @@ export async function routeInbound(input: RouteInput): Promise<string> {
         return `Thanks — noted for ${venue?.name ?? awaitingReply.venueId} 🙌`
     }
 
-    return await runAgent({ client, user, text, geminiClient })
+    return await runAgent({ client, user, text, geminiClient, fetchMenu })
 }

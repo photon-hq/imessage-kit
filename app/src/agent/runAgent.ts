@@ -1,5 +1,6 @@
 import type { SheetsClient } from '../db/sheets'
 import type { User } from '../db/users'
+import type { VenueMenu } from '../scraper/types'
 import { buildSystemPrompt } from './prompts/system'
 import { executeTool, type ToolArgs } from './tools'
 
@@ -17,6 +18,7 @@ export interface HistoryTurn {
     role: 'user' | 'model' | 'tool'
     content: string
     toolName?: string
+    functionCalls?: AgentFunctionCall[]
 }
 
 export interface AgentStepContext {
@@ -28,17 +30,20 @@ export interface AgentGeminiClient {
     step(ctx: AgentStepContext): Promise<AgentStepResponse>
 }
 
+export type FetchMenu = (venueId: string, date: string) => Promise<VenueMenu>
+
 export interface RunAgentInput {
     client: SheetsClient
     user: User | null
     text: string
     geminiClient: AgentGeminiClient
+    fetchMenu?: FetchMenu
 }
 
 const MAX_ITERS = 6
 
 export async function runAgent(input: RunAgentInput): Promise<string> {
-    const { client, user, text, geminiClient } = input
+    const { client, user, text, geminiClient, fetchMenu } = input
     const systemPrompt = buildSystemPrompt({
         now: new Date(),
         user: user
@@ -52,9 +57,13 @@ export async function runAgent(input: RunAgentInput): Promise<string> {
         if (response.functionCalls.length === 0) {
             return response.text.trim() || "I'm not sure — try asking about a specific hall?"
         }
-        history.push({ role: 'model', content: response.text })
+        history.push({
+            role: 'model',
+            content: response.text,
+            functionCalls: response.functionCalls,
+        })
         for (const call of response.functionCalls) {
-            const result = await executeTool(call.name, call.args, { client, user })
+            const result = await executeTool(call.name, call.args, { client, user, fetchMenu })
             history.push({ role: 'tool', content: result, toolName: call.name })
         }
     }

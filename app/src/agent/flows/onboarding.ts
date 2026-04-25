@@ -1,4 +1,4 @@
-import { findVenue } from '../../config/venues'
+import { findVenue, VENUES } from '../../config/venues'
 import { addSchedule } from '../../db/schedules'
 import type { SheetsClient } from '../../db/sheets'
 import { type User, updateUser } from '../../db/users'
@@ -56,16 +56,52 @@ function parseEmail(raw: string): string | null {
     return trimmed
 }
 
+const VENUE_ALIASES: Record<string, string> = {
+    '1920': '1920-commons',
+    commons: '1920-commons',
+    hill: 'hill-house',
+    falk: 'falk-kosher',
+    english: 'english-house',
+    kingscourt: 'english-house',
+    kch: 'english-house',
+    lauder: 'lauder',
+    quaker: 'quaker-kitchen',
+    qk: 'quaker-kitchen',
+    mcc: 'mcclelland-express',
+    mcclelland: 'mcclelland-express',
+    houston: 'houston-market',
+    accenture: 'accenture-cafe',
+    joes: 'joes-cafe',
+    pret: 'pret-locust',
+}
+
 function parseVenueList(raw: string): string[] {
     const lower = raw.trim().toLowerCase()
-    if (lower === 'all' || lower === 'any' || lower === 'everything') return ['*']
-    const tokens = lower.split(/[,;/]|\s+and\s+/)
-    const out: string[] = []
+    if (!lower) return []
+    if (/\b(all|any|everywhere|everything|whatever)\b/.test(lower)) return ['*']
+
+    const found = new Set<string>()
+
+    // Token-based: split on common separators and try findVenue on each.
+    const tokens = lower.split(/[,;/]|\s+and\s+|\s*\+\s*|\s*&\s*/)
     for (const t of tokens) {
         const v = findVenue(t.trim())
-        if (v) out.push(v.id)
+        if (v) found.add(v.id)
     }
-    return out
+
+    // Substring scan: catch venue names mentioned inside longer sentences.
+    for (const v of VENUES) {
+        if (lower.includes(v.name.toLowerCase()) || lower.includes(v.id)) {
+            found.add(v.id)
+        }
+    }
+
+    // Short aliases ("hill", "1920", "mcc") — word-boundary matched.
+    for (const [alias, id] of Object.entries(VENUE_ALIASES)) {
+        if (new RegExp(`\\b${alias}\\b`).test(lower)) found.add(id)
+    }
+
+    return [...found]
 }
 
 interface DaySlot {
@@ -179,7 +215,12 @@ export async function handleOnboardingStep(
         }
         case 'ask_venues': {
             const venues = parseVenueList(message)
-            if (venues.length === 0) return { reply: pickPhrase(user.handle, 'ask_venues') }
+            if (venues.length === 0) {
+                return {
+                    reply:
+                        "Couldn't pick out a hall name. Try something like '1920, Hill, Lauder' — or just say 'all'.",
+                }
+            }
             await updateUser(client, user.handle, {
                 stateContext: { ...user.stateContext, preferredVenues: venues },
                 onboardingStep: 'ask_days',

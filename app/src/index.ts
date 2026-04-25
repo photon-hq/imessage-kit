@@ -59,12 +59,31 @@ function createGeminiAgentClient(apiKey: string, model = 'gemini-2.5-flash'): Ag
     const ai = new GoogleGenAI({ apiKey })
     return {
         async step(ctx: AgentStepContext) {
-            const contents = ctx.history.map((turn) => ({
-                role: turn.role === 'user' ? 'user' : turn.role === 'model' ? 'model' : 'user',
-                parts: turn.role === 'tool'
-                    ? [{ functionResponse: { name: turn.toolName ?? 'tool', response: { result: turn.content } } } as Part]
-                    : [{ text: turn.content } as Part],
-            }))
+            const contents = ctx.history.map((turn) => {
+                if (turn.role === 'tool') {
+                    return {
+                        role: 'user',
+                        parts: [
+                            {
+                                functionResponse: {
+                                    name: turn.toolName ?? 'tool',
+                                    response: { result: turn.content },
+                                },
+                            } as Part,
+                        ],
+                    }
+                }
+                if (turn.role === 'model') {
+                    const parts: Part[] = []
+                    if (turn.content) parts.push({ text: turn.content } as Part)
+                    for (const fc of turn.functionCalls ?? []) {
+                        parts.push({ functionCall: { name: fc.name, args: fc.args } } as Part)
+                    }
+                    if (parts.length === 0) parts.push({ text: '' } as Part)
+                    return { role: 'model', parts }
+                }
+                return { role: 'user', parts: [{ text: turn.content } as Part] }
+            })
 
             const response = await ai.models.generateContent({
                 model,
@@ -120,6 +139,7 @@ async function main(): Promise<void> {
             getVenueMenu(venueId, date, { client: menuClient })
 
         tickInterval = setInterval(async () => {
+            if (!adapter) return
             try {
                 await runTick({ client, adapter, now: new Date(), fetchMenu })
             } catch (err) {
@@ -146,6 +166,7 @@ async function main(): Promise<void> {
                         text: body,
                         geminiClient: agentClient,
                         tidbitClient,
+                        fetchMenu,
                     })
                     if (reply) await space.send(reply)
                 } catch (err) {
