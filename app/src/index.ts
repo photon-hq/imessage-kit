@@ -97,72 +97,81 @@ async function main(): Promise<void> {
     const env = loadEnv()
     console.log(`[penneats] boot v${VERSION} port=${env.port} env=${env.nodeEnv}`)
 
-    const client = createGoogleSheetsClient(env.googleSheetId, env.googleServiceAccountJson)
-    await bootstrap(client)
-    console.log('[penneats] sheets bootstrapped')
-
-    const menuClient = createGeminiClient(env.geminiApiKey)
-    const agentClient = createGeminiAgentClient(env.geminiApiKey)
-    const tidbitClient = createTidbitClient(env.geminiApiKey)
-
-    // Bind HTTP server before slow async operations so health checks pass
+    // Bind server immediately so /healthz passes before slow I/O (bootstrap + spectrum)
     const app = new Hono()
     app.get('/healthz', (c) => c.json({ ok: true }))
     const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
         console.log(`[penneats] listening on :${info.port}`)
     })
 
-    console.log('[penneats] connecting to spectrum...')
-    const adapter = await createSpectrumAdapter({
-        projectId: env.spectrumProjectId,
-        projectSecret: env.spectrumApiKey,
-    })
-    console.log('[penneats] spectrum connected')
+    const menuClient = createGeminiClient(env.geminiApiKey)
+    const agentClient = createGeminiAgentClient(env.geminiApiKey)
+    const tidbitClient = createTidbitClient(env.geminiApiKey)
 
-    const fetchMenu = async (venueId: string, date: string): Promise<VenueMenu> =>
-        getVenueMenu(venueId, date, { client: menuClient })
+    let tickInterval: ReturnType<typeof setInterval> | undefined
+    let adapter: Awaited<ReturnType<typeof createSpectrumAdapter>> | undefined
 
-    const tickInterval = setInterval(async () => {
-        try {
-            await runTick({ client, adapter, now: new Date(), fetchMenu })
-        } catch (err) {
-            console.error('[penneats] tick error:', err instanceof Error ? err.message : err)
-        }
-    }, 60_000)
+    const startServices = async () => {
+        const client = createGoogleSheetsClient(env.googleSheetId, env.googleServiceAccountJson)
+        await bootstrap(client)
+        console.log('[penneats] sheets bootstrapped')
 
-    const consumeInbound = async (): Promise<void> => {
-        for await (const [space, msg] of adapter.instance.messages) {
-            if (msg.content.type !== 'text') continue
-            const handle = msg.sender.id
-            const body = msg.content.text
+        const fetchMenu = async (venueId: string, date: string): Promise<VenueMenu> =>
+            getVenueMenu(venueId, date, { client: menuClient })
+
+        tickInterval = setInterval(async () => {
             try {
-                const reply = await routeInbound({
-                    client,
-                    rawHandle: handle,
-                    text: body,
-                    geminiClient: agentClient,
-                    tidbitClient,
-                })
-                if (reply) await space.send(reply)
+                await runTick({ client, adapter, now: new Date(), fetchMenu })
             } catch (err) {
-                console.error('[penneats] inbound error:', err instanceof Error ? err.message : err)
+                console.error('[penneats] tick error:', err instanceof Error ? err.message : err)
+            }
+        }, 60_000)
+
+        console.log('[penneats] connecting to spectrum...')
+        adapter = await createSpectrumAdapter({
+            projectId: env.spectrumProjectId,
+            projectSecret: env.spectrumApiKey,
+        })
+        console.log('[penneats] spectrum connected')
+
+        const consumeInbound = async (): Promise<void> => {
+            for await (const [space, msg] of adapter!.instance.messages) {
+                if (msg.content.type !== 'text') continue
+                const handle = msg.sender.id
+                const body = msg.content.text
                 try {
-                    await space.send('Sorry, something went wrong — try again in a moment.')
-                } catch {
-                    // already logged
+                    const reply = await routeInbound({
+                        client,
+                        rawHandle: handle,
+                        text: body,
+                        geminiClient: agentClient,
+                        tidbitClient,
+                    })
+                    if (reply) await space.send(reply)
+                } catch (err) {
+                    console.error('[penneats] inbound error:', err instanceof Error ? err.message : err)
+                    try {
+                        await space.send('Sorry, something went wrong — try again in a moment.')
+                    } catch {
+                        // already logged
+                    }
                 }
             }
         }
+        void consumeInbound().catch((err) => {
+            console.error('[penneats] message stream ended:', err instanceof Error ? err.message : err)
+            process.exit(1)
+        })
     }
-    void consumeInbound().catch((err) => {
-        console.error('[penneats] message stream ended:', err instanceof Error ? err.message : err)
-        process.exit(1)
+
+    void startServices().catch((err) => {
+        console.error('[penneats] startup error:', err instanceof Error ? err.message : err)
     })
 
     const shutdown = async (signal: string) => {
         console.log(`[penneats] ${signal} received, shutting down`)
-        clearInterval(tickInterval)
-        await adapter.stop().catch(() => {})
+        if (tickInterval) clearInterval(tickInterval)
+        await adapter?.stop().catch(() => {})
         server.close()
         process.exit(0)
     }
