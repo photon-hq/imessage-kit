@@ -1,6 +1,6 @@
 import { findVenue } from '../config/venues'
 import { findRecentForHandle } from '../db/mealEvents'
-import { appendMessage, recentMessagesForHandle } from '../db/messages'
+import { appendMessage, clearMessagesForHandle, recentMessagesForHandle } from '../db/messages'
 import type { SheetsClient } from '../db/sheets'
 import { createUser, getUser } from '../db/users'
 import { normalizeHandle } from '../lib/handle'
@@ -27,6 +27,11 @@ export async function routeInbound(input: RouteInput): Promise<string> {
     let user = await getUser(client, handle)
     if (!user) {
         user = await createUser(client, { handle })
+    }
+
+    if (text.trim().toLowerCase() === '/clear') {
+        await clearMessagesForHandle(client, handle)
+        return 'Cleared — fresh start.'
     }
 
     if (user.state !== 'active') {

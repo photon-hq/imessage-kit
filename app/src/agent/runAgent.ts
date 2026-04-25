@@ -45,10 +45,15 @@ const MAX_ITERS = 6
 
 export async function runAgent(input: RunAgentInput): Promise<string> {
     const { client, user, text, geminiClient, fetchMenu, priorHistory } = input
+    const preferredVenues = (user?.stateContext?.preferredVenues as string[] | undefined) ?? []
     const systemPrompt = buildSystemPrompt({
         now: new Date(),
         user: user
-            ? { name: user.name, dietaryRestrictions: user.dietaryRestrictions }
+            ? {
+                  name: user.name,
+                  dietaryRestrictions: user.dietaryRestrictions,
+                  preferredVenues,
+              }
             : undefined,
     })
     const history: HistoryTurn[] = [

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { SheetsClient } from './sheets'
 
-export type MessageRole = 'user' | 'model'
+export type MessageRole = 'user' | 'model' | 'system'
 
 export interface Message {
     id: string
@@ -12,6 +12,7 @@ export interface Message {
 }
 
 const RANGE = 'messages!A:E'
+const CLEAR_MARKER = '__CLEAR__'
 
 function rowToMessage(row: string[]): Message {
     return {
@@ -46,11 +47,20 @@ export async function appendMessage(
     return m
 }
 
+export async function clearMessagesForHandle(
+    client: SheetsClient,
+    handle: string,
+): Promise<void> {
+    await appendMessage(client, { handle, role: 'system', content: CLEAR_MARKER })
+}
+
+export type ConversationTurn = Message & { role: 'user' | 'model' }
+
 export async function recentMessagesForHandle(
     client: SheetsClient,
     handle: string,
     limit: number,
-): Promise<Message[]> {
+): Promise<ConversationTurn[]> {
     const rows = await client.get(RANGE)
     const matches: Message[] = []
     for (let i = 1; i < rows.length; i++) {
@@ -60,5 +70,17 @@ export async function recentMessagesForHandle(
         matches.push(m)
     }
     matches.sort((a, b) => a.ts.localeCompare(b.ts))
-    return matches.slice(-limit)
+
+    let lastClearIdx = -1
+    for (let i = matches.length - 1; i >= 0; i--) {
+        if (matches[i]!.role === 'system' && matches[i]!.content === CLEAR_MARKER) {
+            lastClearIdx = i
+            break
+        }
+    }
+    const after = lastClearIdx >= 0 ? matches.slice(lastClearIdx + 1) : matches
+    const turns = after.filter(
+        (m): m is ConversationTurn => m.role === 'user' || m.role === 'model',
+    )
+    return turns.slice(-limit)
 }

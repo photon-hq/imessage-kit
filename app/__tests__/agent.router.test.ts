@@ -110,6 +110,54 @@ describe('routeInbound', () => {
         expect(captured.value?.firstText).toBe('first ping')
     })
 
+    it('handles /clear by wiping conversation history for that handle', async () => {
+        const client = await setup()
+        await createUser(client, { handle: '+14155550123' })
+        await updateUser(client, '+14155550123', { state: 'active', onboardingStep: 'done' })
+
+        const captured: { value: number } = { value: -1 }
+        const recordingClient: AgentGeminiClient = {
+            async step(ctx) {
+                captured.value = ctx.history.length
+                return { text: 'pong', functionCalls: [] }
+            },
+        }
+
+        await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: 'first',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: 'second',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        expect(captured.value).toBe(3)
+
+        const clearReply = await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: '/clear',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        expect(clearReply.toLowerCase()).toContain('cleared')
+
+        await routeInbound({
+            client,
+            rawHandle: '+14155550123',
+            text: 'after clear',
+            geminiClient: recordingClient,
+            tidbitClient: tidbitStub,
+        })
+        expect(captured.value).toBe(1)
+    })
+
     it('routes a reply to a recently post-sent meal as a followup', async () => {
         const client = await setup()
         await createUser(client, { handle: '+14155550123' })
