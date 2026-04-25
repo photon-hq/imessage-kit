@@ -30,6 +30,15 @@ describe('bootstrap', () => {
         expect(users[0]).toEqual(TAB_HEADERS.users)
     })
 
+    it('creates missing tabs on a brand-new spreadsheet', async () => {
+        const client = createMemoryClient()
+        await bootstrap(client)
+        for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
+            const rows = await client.get(`${tab}!A:Z`)
+            expect(rows[0]).toEqual(headers)
+        }
+    })
+
     it('throws on column drift', async () => {
         const client = createMemoryClient({
             users: [['handle', 'name']],

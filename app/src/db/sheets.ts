@@ -7,6 +7,7 @@ export interface SheetsClient {
     append(range: string, rows: Row[]): Promise<void>
     update(range: string, rows: Row[]): Promise<void>
     clear(range: string): Promise<void>
+    ensureTab(name: string): Promise<void>
     invalidate(range?: string): void
 }
 
@@ -73,6 +74,19 @@ export function createGoogleSheetsClient(spreadsheetId: string, serviceAccountJs
             await sheets.spreadsheets.values.clear({ spreadsheetId, range })
             invalidate(range)
         },
+        async ensureTab(name) {
+            const meta = await sheets.spreadsheets.get({ spreadsheetId, includeGridData: false })
+            const titles = (meta.data.sheets ?? [])
+                .map((s) => s.properties?.title)
+                .filter((t): t is string => typeof t === 'string')
+            if (titles.includes(name)) return
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: {
+                    requests: [{ addSheet: { properties: { title: name } } }],
+                },
+            })
+        },
         invalidate,
     }
 }
@@ -118,6 +132,9 @@ export function createMemoryClient(initial: Record<string, Row[]> = {}): SheetsC
         async clear(range) {
             const { tab } = parseRange(range)
             tabs.set(tab, [])
+        },
+        async ensureTab(name) {
+            if (!tabs.has(name)) tabs.set(name, [])
         },
         invalidate() {},
     }

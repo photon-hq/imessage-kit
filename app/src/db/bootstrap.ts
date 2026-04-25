@@ -32,6 +32,7 @@ export const TAB_HEADERS = {
 
 export async function bootstrap(client: SheetsClient): Promise<void> {
     for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
+        await client.ensureTab(tab)
         const rows = await client.get(`${tab}!A:Z`)
         if (rows.length === 0) {
             await client.append(`${tab}!A:Z`, [headers as string[]])

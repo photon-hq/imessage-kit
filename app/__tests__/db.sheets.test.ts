@@ -18,6 +18,15 @@ describe('SheetsClient (memory impl)', () => {
         expect(rows[1]).toEqual(['+14155550123', 'Alicia'])
     })
 
+    it('ensureTab creates a missing tab and is idempotent', async () => {
+        const client = createMemoryClient()
+        await client.ensureTab('users')
+        expect(await client.get('users!A:Z')).toEqual([])
+        await client.append('users!A:Z', [['handle']])
+        await client.ensureTab('users')
+        expect(await client.get('users!A:Z')).toEqual([['handle']])
+    })
+
     it('caches reads for 15s but serves fresh data after write', async () => {
         const client = createMemoryClient({ users: [['h']] })
         const a = await client.get('users!A:A')
