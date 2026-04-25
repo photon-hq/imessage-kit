@@ -1,9 +1,8 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { GoogleGenAI, Type, type FunctionDeclaration, type Part } from '@google/genai'
 import { routeInbound } from './agent/router'
 import { createTidbitClient } from './agent/extractTidbits'
-import type { AgentFunctionCall, AgentGeminiClient, AgentStepContext } from './agent/runAgent'
+import { createGeminiAgentClient } from './agent/geminiClient'
 import { loadEnv } from './config/env'
 import { bootstrap } from './db/bootstrap'
 import { createGoogleSheetsClient } from './db/sheets'
@@ -14,109 +13,11 @@ import type { VenueMenu } from './scraper/types'
 
 export const VERSION = '2.0.0'
 
-const TOOL_DECLARATIONS: FunctionDeclaration[] = [
-    {
-        name: 'get_knowledge',
-        description: 'Read anonymized food insights other Penn students left today or on a specific date. Optionally filter by venueId.',
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                date: { type: Type.STRING, description: 'YYYY-MM-DD; omit for today' },
-                venueId: { type: Type.STRING, description: 'venue id like "hill-house" (optional)' },
-            },
-        },
-    },
-    {
-        name: 'save_knowledge',
-        description: 'Save an anonymized tidbit. Use only when the user mentions something publicly useful.',
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                venueId: { type: Type.STRING },
-                mealLabel: { type: Type.STRING },
-                item: { type: Type.STRING, description: 'Short paraphrase, under 60 chars' },
-                tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-            required: ['venueId', 'mealLabel', 'item', 'tags'],
-        },
-    },
-    {
-        name: 'get_venue_menu',
-        description: "Fetch today's food items for a specific venue + meal.",
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                venueId: { type: Type.STRING },
-                date: { type: Type.STRING },
-                mealLabel: { type: Type.STRING },
-            },
-            required: ['venueId'],
-        },
-    },
-]
-
-function createGeminiAgentClient(apiKey: string, model = 'gemini-2.5-flash'): AgentGeminiClient {
-    const ai = new GoogleGenAI({ apiKey })
-    return {
-        async step(ctx: AgentStepContext) {
-            const contents = ctx.history.map((turn) => {
-                if (turn.role === 'tool') {
-                    return {
-                        role: 'user',
-                        parts: [
-                            {
-                                functionResponse: {
-                                    name: turn.toolName ?? 'tool',
-                                    response: { result: turn.content },
-                                },
-                            } as Part,
-                        ],
-                    }
-                }
-                if (turn.role === 'model') {
-                    const parts: Part[] = []
-                    if (turn.content) parts.push({ text: turn.content } as Part)
-                    for (const fc of turn.functionCalls ?? []) {
-                        parts.push({ functionCall: { name: fc.name, args: fc.args } } as Part)
-                    }
-                    if (parts.length === 0) parts.push({ text: '' } as Part)
-                    return { role: 'model', parts }
-                }
-                return { role: 'user', parts: [{ text: turn.content } as Part] }
-            })
-
-            const response = await ai.models.generateContent({
-                model,
-                contents,
-                config: {
-                    systemInstruction: ctx.systemPrompt,
-                    tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
-                    maxOutputTokens: 1024,
-                },
-            })
-            const parts: Part[] = response.candidates?.[0]?.content?.parts ?? []
-            const calls: AgentFunctionCall[] = []
-            let textOut = ''
-            for (const p of parts) {
-                if (p.functionCall) {
-                    calls.push({
-                        name: p.functionCall.name ?? '',
-                        args: (p.functionCall.args ?? {}) as AgentFunctionCall['args'],
-                    })
-                } else if (p.text) {
-                    textOut += p.text
-                }
-            }
-            return { text: textOut, functionCalls: calls }
-        },
-    }
-}
-
 async function main(): Promise<void> {
     const env = loadEnv()
     console.log(`[penneats] boot v${VERSION} port=${env.port} env=${env.nodeEnv}`)
 
-    // Bind server immediately so /healthz passes before slow I/O (bootstrap + spectrum)
+    // Bind server immediately so /healthz passes before slow I/O (bootstrap + spectrum).
     const app = new Hono()
     app.get('/healthz', (c) => c.json({ ok: true }))
     const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
@@ -128,6 +29,7 @@ async function main(): Promise<void> {
 
     let tickInterval: ReturnType<typeof setInterval> | undefined
     let adapter: Awaited<ReturnType<typeof createSpectrumAdapter>> | undefined
+    let tickRunning = false
 
     const startServices = async () => {
         const client = createGoogleSheetsClient(env.googleSheetId, env.googleServiceAccountJson)
@@ -137,24 +39,31 @@ async function main(): Promise<void> {
         const fetchMenu = async (venueId: string, date: string): Promise<VenueMenu> =>
             getVenueMenu(venueId, date)
 
-        tickInterval = setInterval(async () => {
-            if (!adapter) return
-            try {
-                await runTick({ client, adapter, now: new Date(), fetchMenu })
-            } catch (err) {
-                console.error('[penneats] tick error:', err instanceof Error ? err.message : err)
-            }
-        }, 60_000)
-
         console.log('[penneats] connecting to spectrum...')
         adapter = await createSpectrumAdapter({
-            projectId: env.spectrumProjectId,
-            projectSecret: env.spectrumApiKey,
+            projectId: env.photonProjectId,
+            projectSecret: env.photonProjectSecret,
         })
         console.log('[penneats] spectrum connected')
 
+        // Start the tick AFTER the adapter is bound so we never enter runTick with a
+        // missing adapter. The tickRunning guard prevents re-entry if a tick stretches
+        // beyond the 60s interval (e.g. Sheets rate limiting).
+        const boundAdapter = adapter
+        tickInterval = setInterval(async () => {
+            if (tickRunning) return
+            tickRunning = true
+            try {
+                await runTick({ client, adapter: boundAdapter, now: new Date(), fetchMenu })
+            } catch (err) {
+                console.error('[penneats] tick error:', err instanceof Error ? err.message : err)
+            } finally {
+                tickRunning = false
+            }
+        }, 60_000)
+
         const consumeInbound = async (): Promise<void> => {
-            for await (const [space, msg] of adapter!.instance.messages) {
+            for await (const [space, msg] of boundAdapter.instance.messages) {
                 if (msg.content.type !== 'text') continue
                 const handle = msg.sender.id
                 const body = msg.content.text
@@ -178,15 +87,27 @@ async function main(): Promise<void> {
                     try {
                         await space.send('Sorry, something went wrong — try again in a moment.')
                     } catch {
-                        // already logged
+                        // already logged above
                     }
                 }
             }
         }
-        void consumeInbound().catch((err) => {
-            console.error('[penneats] message stream ended:', err instanceof Error ? err.message : err)
-            process.exit(1)
-        })
+
+        // The async iterator ending or throwing is treated as fatal: exit and let Fly's
+        // restart policy reconnect with a fresh adapter rather than retrying a dead stream.
+        consumeInbound().then(
+            () => {
+                console.error('[penneats] message stream ended; exiting for restart')
+                process.exit(1)
+            },
+            (err) => {
+                console.error(
+                    '[penneats] message stream errored:',
+                    err instanceof Error ? err.message : err,
+                )
+                process.exit(1)
+            },
+        )
     }
 
     void startServices().catch((err) => {

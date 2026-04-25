@@ -43,6 +43,7 @@ export async function buildRecommendation(input: RecommendInput): Promise<Recomm
         chosenMenu = await fetchMenu(v.id, date)
     } else {
         const halls = getDiningHalls()
+        if (halls.length === 0) throw new Error('No dining halls configured')
         const menus = await Promise.all(halls.map((h) => fetchMenu(h.id, date)))
         const schedules = await listSchedules(client, user.handle)
         const affinities = [
@@ -53,9 +54,11 @@ export async function buildRecommendation(input: RecommendInput): Promise<Recomm
             { dietaryRestrictions: user.dietaryRestrictions, affinities },
             knowledge.map((k) => ({ venueId: k.venueId, tags: k.tags })),
         )
-        if (ranked.length === 0) throw new Error('No venues passed ranking filters')
-        const top = ranked[0]!
-        chosenMenu = menus.find((m) => m.venueId === top.venueId)!
+        // Falling back to "first menu with any items" prevents the entire pre-meal
+        // nudge from silently failing when dietary filters drop everything.
+        const top = ranked[0]
+        const matched = top ? menus.find((m) => m.venueId === top.venueId) : undefined
+        chosenMenu = matched ?? menus.find((m) => topItem(m) !== null) ?? menus[0]!
     }
 
     const item = topItem(chosenMenu)

@@ -2,10 +2,6 @@ import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
 
 const TZ = 'America/New_York'
 
-export function nyNow(): Date {
-    return new Date()
-}
-
 export function nyDateKey(d: Date): string {
     return formatInTimeZone(d, TZ, 'yyyy-MM-dd')
 }

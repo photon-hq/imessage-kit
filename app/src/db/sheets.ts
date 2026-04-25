@@ -23,7 +23,14 @@ function rangeSheet(range: string): string {
 }
 
 export function createGoogleSheetsClient(spreadsheetId: string, serviceAccountJson: string): SheetsClient {
-    const credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>
+    let credentials: Record<string, unknown>
+    try {
+        credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>
+    } catch (err) {
+        throw new Error(
+            `GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+        )
+    }
     const auth = new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],

@@ -13,14 +13,28 @@ export interface Knowledge {
 
 const RANGE = 'knowledge!A:G'
 
+function parseTags(raw: string, id: string): string[] {
+    if (!raw) return []
+    try {
+        const v = JSON.parse(raw)
+        if (Array.isArray(v) && v.every((s) => typeof s === 'string')) return v
+        console.warn(`[knowledge] ${id} tags: expected string[], got ${typeof v}; defaulting to []`)
+        return []
+    } catch (err) {
+        console.warn(`[knowledge] ${id} tags: invalid JSON (${err instanceof Error ? err.message : err}); defaulting to []`)
+        return []
+    }
+}
+
 function rowToKnowledge(row: string[]): Knowledge {
+    const id = row[0] ?? ''
     return {
-        id: row[0] ?? '',
+        id,
         date: row[1] ?? '',
         venueId: row[2] ?? '',
         mealLabel: row[3] ?? '',
         item: row[4] ?? '',
-        tags: row[5] ? (JSON.parse(row[5]) as string[]) : [],
+        tags: parseTags(row[5] ?? '', id),
         createdAt: row[6] ?? '',
     }
 }

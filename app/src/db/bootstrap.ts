@@ -39,6 +39,8 @@ export async function bootstrap(client: SheetsClient): Promise<void> {
             await client.append(`${tab}!A:Z`, [headers])
             continue
         }
+        // Verify existing column ordering matches; trailing extra columns are tolerated
+        // so we can add new sheet columns in production without a tight deploy/sheet edit lockstep.
         const existing = rows[0]!
         for (let i = 0; i < headers.length; i++) {
             if (existing[i] !== headers[i]) {

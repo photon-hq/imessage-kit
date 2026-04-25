@@ -44,9 +44,11 @@ function nyOffsetMinutes(epochMs: number): number {
         timeZoneName: 'longOffset',
     })
     const parts = fmt.formatToParts(new Date(epochMs))
-    const off = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT-05:00'
+    const off = parts.find((p) => p.type === 'timeZoneName')?.value
+    if (!off) throw new Error('Could not determine America/New_York offset (no timeZoneName part)')
     const m = /GMT([+-])(\d{2}):(\d{2})/.exec(off)
-    if (!m) return -300
+    // Fail loud rather than silently returning EST in summer — a fallback hid bugs for 8 months/year.
+    if (!m) throw new Error(`Could not parse offset string: ${off}`)
     const sign = m[1] === '+' ? 1 : -1
     return sign * (parseInt(m[2]!, 10) * 60 + parseInt(m[3]!, 10))
 }

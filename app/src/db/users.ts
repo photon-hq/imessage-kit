@@ -16,14 +16,41 @@ export interface User {
 
 const RANGE = 'users!A:I'
 
+function parseStringArray(raw: string, handle: string, field: string): string[] {
+    if (!raw) return []
+    try {
+        const v = JSON.parse(raw)
+        if (Array.isArray(v) && v.every((s) => typeof s === 'string')) return v
+        console.warn(`[users] ${handle} ${field}: expected string[], got ${typeof v}; defaulting to []`)
+        return []
+    } catch (err) {
+        console.warn(`[users] ${handle} ${field}: invalid JSON (${err instanceof Error ? err.message : err}); defaulting to []`)
+        return []
+    }
+}
+
+function parseObject(raw: string, handle: string, field: string): Record<string, unknown> {
+    if (!raw) return {}
+    try {
+        const v = JSON.parse(raw)
+        if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+        console.warn(`[users] ${handle} ${field}: expected object, got ${typeof v}; defaulting to {}`)
+        return {}
+    } catch (err) {
+        console.warn(`[users] ${handle} ${field}: invalid JSON (${err instanceof Error ? err.message : err}); defaulting to {}`)
+        return {}
+    }
+}
+
 function rowToUser(row: string[]): User {
+    const handle = row[0] ?? ''
     return {
-        handle: row[0] ?? '',
+        handle,
         name: row[1] ?? '',
         email: row[2] ?? '',
-        dietaryRestrictions: row[3] ? (JSON.parse(row[3]) as string[]) : [],
+        dietaryRestrictions: parseStringArray(row[3] ?? '', handle, 'dietaryRestrictions'),
         state: (row[4] as UserState) || 'new',
-        stateContext: row[5] ? (JSON.parse(row[5]) as Record<string, unknown>) : {},
+        stateContext: parseObject(row[5] ?? '', handle, 'stateContext'),
         onboardingStep: row[6] ?? '',
         createdAt: row[7] ?? '',
         updatedAt: row[8] ?? '',

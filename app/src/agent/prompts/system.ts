@@ -8,12 +8,6 @@ export interface PromptContext {
         dietaryRestrictions?: string[]
         preferredVenues?: string[]
     }
-    awaitingReview?: {
-        venueId: string
-        venueName: string
-        mealLabel: string
-        date: string
-    }
 }
 
 const ALL_HALLS = getDiningHalls()
@@ -69,10 +63,6 @@ ${allHallsLine}
         if (preferred.length > 0) {
             prompt += `- Preferred halls: ${venuesLine(preferred)}.\n`
         }
-    }
-
-    if (ctx.awaitingReview) {
-        prompt += `\n## Awaiting review\nThis user just finished ${ctx.awaitingReview.mealLabel} at ${ctx.awaitingReview.venueName} on ${ctx.awaitingReview.date}. Their current message is a followup reply. Extract any publicly-useful food/location tidbit and call save_knowledge. Keep the reply under 2 lines.\n`
     }
 
     return prompt

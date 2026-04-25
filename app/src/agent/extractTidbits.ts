@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai'
+import { z } from 'zod'
 import type { MealEvent } from '../db/mealEvents'
 import type { ExtractedTidbit } from './flows/followup'
 
@@ -23,6 +24,15 @@ const SCHEMA = {
     },
     required: ['tidbits'],
 }
+
+const TidbitResponse = z.object({
+    tidbits: z.array(
+        z.object({
+            item: z.string(),
+            tags: z.array(z.string()),
+        }),
+    ),
+})
 
 export function createTidbitClient(apiKey: string, model = 'gemini-2.5-flash'): TidbitGeminiClient {
     const ai = new GoogleGenAI({ apiKey })
@@ -50,8 +60,19 @@ Rules:
                 },
             })
             const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '{"tidbits":[]}'
-            const parsed = JSON.parse(text) as { tidbits: ExtractedTidbit[] }
-            return parsed.tidbits
+            let raw: unknown
+            try {
+                raw = JSON.parse(text)
+            } catch (err) {
+                console.warn(`[tidbits] non-JSON from model: ${err instanceof Error ? err.message : err}`)
+                return []
+            }
+            const parsed = TidbitResponse.safeParse(raw)
+            if (!parsed.success) {
+                console.warn(`[tidbits] schema mismatch: ${parsed.error.message}`)
+                return []
+            }
+            return parsed.data.tidbits
         },
     }
 }

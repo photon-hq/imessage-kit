@@ -1,5 +1,5 @@
 import { findVenue, VENUES } from '../../config/venues'
-import { addSchedule } from '../../db/schedules'
+import { addSchedule, deleteSchedulesFor } from '../../db/schedules'
 import type { SheetsClient } from '../../db/sheets'
 import { type User, updateUser } from '../../db/users'
 import { pickPhrase } from '../prompts/phrases'
@@ -232,6 +232,8 @@ export async function handleOnboardingStep(
             if (slots.length === 0) return { reply: pickPhrase(user.handle, 'ask_days') }
             const preferred = (user.stateContext.preferredVenues as string[] | undefined) ?? ['*']
             const venueForSchedule = preferred.length === 1 && preferred[0] !== '*' ? preferred[0]! : 'auto'
+            // Re-entry to ask_days (e.g. user backs up to fix a typo) must replace, not duplicate.
+            await deleteSchedulesFor(client, user.handle)
             for (const slot of slots) {
                 await addSchedule(client, {
                     handle: user.handle,

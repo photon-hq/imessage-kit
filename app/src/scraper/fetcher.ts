@@ -5,7 +5,7 @@ export interface FetchOptions {
     fetchImpl?: typeof fetch
 }
 
-export function buildVenueUrl(slug: string, date: string): string {
+function buildVenueUrl(slug: string, date: string): string {
     return `${BASE}/${slug}/?date=${date}`
 }
 

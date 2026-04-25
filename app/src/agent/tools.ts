@@ -1,3 +1,4 @@
+import { Type, type FunctionDeclaration } from '@google/genai'
 import { findVenue } from '../config/venues'
 import { addKnowledge, getKnowledgeForDay } from '../db/knowledge'
 import type { SheetsClient } from '../db/sheets'
@@ -18,6 +19,49 @@ export interface ToolArgs {
     item?: string
     tags?: string[]
 }
+
+// Declarations sent to Gemini's function-calling API. Keep colocated with the
+// dispatcher so adding a tool is a single-file change.
+export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
+    {
+        name: 'get_knowledge',
+        description: 'Read anonymized food insights other Penn students left today or on a specific date. Optionally filter by venueId.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                date: { type: Type.STRING, description: 'YYYY-MM-DD; omit for today' },
+                venueId: { type: Type.STRING, description: 'venue id like "hill-house" (optional)' },
+            },
+        },
+    },
+    {
+        name: 'save_knowledge',
+        description: 'Save an anonymized tidbit. Use only when the user mentions something publicly useful.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                venueId: { type: Type.STRING },
+                mealLabel: { type: Type.STRING },
+                item: { type: Type.STRING, description: 'Short paraphrase, under 60 chars' },
+                tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['venueId', 'mealLabel', 'item', 'tags'],
+        },
+    },
+    {
+        name: 'get_venue_menu',
+        description: "Fetch today's food items for a specific venue + meal.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                venueId: { type: Type.STRING },
+                date: { type: Type.STRING },
+                mealLabel: { type: Type.STRING },
+            },
+            required: ['venueId'],
+        },
+    },
+]
 
 function summarizeMenu(menu: VenueMenu, mealLabel?: string): string {
     if (menu.dayparts.length === 0) {
@@ -77,6 +121,9 @@ export async function executeTool(
                 return `Unknown tool: ${name}`
         }
     } catch (err) {
-        return `Error: ${err instanceof Error ? err.message : String(err)}`
+        // Log full error for ops; return a short string the LLM can recover from.
+        console.error(`[tool] ${name} failed:`, err)
+        const msg = err instanceof Error ? err.message : String(err)
+        return `Error: ${msg}`
     }
 }

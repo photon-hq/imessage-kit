@@ -56,12 +56,15 @@ function eventToRow(e: MealEvent): string[] {
     ]
 }
 
-async function indexOfId(client: SheetsClient, id: string): Promise<number> {
+async function findRowById(
+    client: SheetsClient,
+    id: string,
+): Promise<{ index: number; row: string[] } | null> {
     const rows = await client.get(RANGE)
     for (let i = 1; i < rows.length; i++) {
-        if (rows[i]?.[0] === id) return i
+        if (rows[i]?.[0] === id) return { index: i, row: rows[i]! }
     }
-    return -1
+    return null
 }
 
 export async function findByMealKey(client: SheetsClient, mealKey: string): Promise<MealEvent | null> {
@@ -108,12 +111,10 @@ export async function claimMealWindow(
 }
 
 async function updateEvent(client: SheetsClient, id: string, patch: Partial<MealEvent>): Promise<void> {
-    const i = await indexOfId(client, id)
-    if (i === -1) throw new Error(`MealEvent not found: ${id}`)
-    const rows = await client.get(RANGE)
-    const existing = rowToEvent(rows[i]!)
-    const next: MealEvent = { ...existing, ...patch }
-    const sheetRow = i + 1
+    const found = await findRowById(client, id)
+    if (!found) throw new Error(`MealEvent not found: ${id}`)
+    const next: MealEvent = { ...rowToEvent(found.row), ...patch }
+    const sheetRow = found.index + 1
     await client.update(`meal_events!A${sheetRow}:L${sheetRow}`, [eventToRow(next)])
 }
 

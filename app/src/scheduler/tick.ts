@@ -22,6 +22,9 @@ export interface TickDeps {
 }
 
 const MEAL_DURATION_MIN = 90
+// Pre-meal nudge fires when the schedule start is 18-22 min away — wide enough that a
+// missed tick (cold start, rate-limit) within a single ~60s interval still catches the
+// window, but narrow enough that we send within roughly the same minute each day.
 const PRE_WINDOW_MIN_LOW = 18
 const PRE_WINDOW_MIN_HIGH = 22
 

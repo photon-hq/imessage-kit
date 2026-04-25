@@ -28,17 +28,4 @@ describe('buildSystemPrompt', () => {
         expect(prompt).toContain('vegan')
     })
 
-    it('injects awaiting_review context', () => {
-        const prompt = buildSystemPrompt({
-            now: new Date('2026-04-24T17:30:00Z'),
-            awaitingReview: {
-                venueId: 'hill-house',
-                venueName: 'Hill House',
-                mealLabel: 'Dinner',
-                date: '2026-04-23',
-            },
-        })
-        expect(prompt).toMatch(/awaiting.review|followup/i)
-        expect(prompt).toContain('Hill House')
-    })
 })

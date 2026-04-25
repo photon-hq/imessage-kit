@@ -12,8 +12,9 @@ describe('loadEnv', () => {
             NODE_ENV: 'test',
         })
         expect(env.geminiApiKey).toBe('g')
+        expect(env.photonProjectId).toBe('p')
+        expect(env.photonProjectSecret).toBe('s')
         expect(env.port).toBe(3000)
-        expect(env.tz).toBe('America/New_York')
     })
 
     it('throws when GEMINI_API_KEY is missing', () => {

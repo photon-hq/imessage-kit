@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { bootstrap } from '../src/db/bootstrap'
-import { findByMealKey, findPendingPostsBefore } from '../src/db/mealEvents'
+import { computeMealKey, findByMealKey, findPendingPostsBefore } from '../src/db/mealEvents'
 import { addSchedule } from '../src/db/schedules'
 import { createMemoryClient } from '../src/db/sheets'
 import { createUser, updateUser } from '../src/db/users'
@@ -156,10 +156,10 @@ describe('runTick', () => {
         await runTick({ client, adapter, now, fetchMenu: async (id) => emptyMenu(id) })
         expect(adapter.sent).toHaveLength(1)
         expect(adapter.sent[0]?.to).toBe('+14155559999')
-        const ev = await findByMealKey(client, (await (async () => {
-            const { computeMealKey } = await import('../src/db/mealEvents')
-            return computeMealKey('+14155550123', '2026-04-24', 'Lunch')
-        })()))
+        const ev = await findByMealKey(
+            client,
+            computeMealKey('+14155550123', '2026-04-24', 'Lunch'),
+        )
         expect(ev?.preSentAt).toBe('')
     })
 })

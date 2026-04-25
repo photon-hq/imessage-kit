@@ -12,13 +12,12 @@ const envSchema = z.object({
 
 export interface Env {
     geminiApiKey: string
-    spectrumApiKey: string
-    spectrumProjectId: string
+    photonProjectId: string
+    photonProjectSecret: string
     googleSheetId: string
     googleServiceAccountJson: string
     port: number
     nodeEnv: 'development' | 'production' | 'test'
-    tz: 'America/New_York'
 }
 
 export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -30,12 +29,11 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     const e = parsed.data
     return {
         geminiApiKey: e.GEMINI_API_KEY,
-        spectrumApiKey: e.PHOTON_PROJECT_SECRET,
-        spectrumProjectId: e.PHOTON_PROJECT_ID,
+        photonProjectId: e.PHOTON_PROJECT_ID,
+        photonProjectSecret: e.PHOTON_PROJECT_SECRET,
         googleSheetId: e.GOOGLE_SHEET_ID,
         googleServiceAccountJson: e.GOOGLE_SERVICE_ACCOUNT_JSON,
         port: e.PORT,
         nodeEnv: e.NODE_ENV,
-        tz: 'America/New_York',
     }
 }
