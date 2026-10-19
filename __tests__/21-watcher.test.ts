@@ -377,3 +377,94 @@ describe('MessageWatchSource — consume loop', () => {
         await source.stop()
     })
 })
+
+// -----------------------------------------------
+// Unlinked senders
+// -----------------------------------------------
+
+describe('MessageWatchSource — unlinked senders', () => {
+    // A chat.db stand-in whose rows can be updated between polls.
+    function createTable(rows: Message[]) {
+        const table = new Map(rows.map((row) => [row.rowId, row]))
+        return {
+            update(rowId: number, patch: Partial<Message>) {
+                const row = table.get(rowId)
+                if (row) table.set(rowId, { ...row, ...patch })
+            },
+            database: {
+                getMaxRowId: async () => 0,
+                getMessagesSinceRowId: async (since: number) =>
+                    [...table.values()].filter((row) => row.rowId > since).sort((a, b) => a.rowId - b.rowId),
+            },
+        }
+    }
+
+    async function watch(table: ReturnType<typeof createTable>, senderLinkGraceMs?: number) {
+        const { MessageWatchSource } = await import('../src/infra/db/watcher')
+        const emitted: Message[] = []
+        const source = new MessageWatchSource({
+            database: table.database,
+            databasePath: '/tmp/chat.db',
+            onBatch: (batch) => {
+                emitted.push(...batch)
+            },
+            watchFactory: () => createWatchHandle(),
+            senderLinkGraceMs,
+        })
+        await source.start()
+        return { source, emitted }
+    }
+
+    it('holds a row until its sender links, emitting earlier rows and keeping order', async () => {
+        const table = createTable([createMessage(1), { ...createMessage(2), participant: null }, createMessage(3)])
+        const { source, emitted } = await watch(table)
+
+        await waitFor(() => emitted.length === 1, 500)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(emitted.map((m) => m.rowId)).toEqual([1])
+
+        table.update(2, { participant: '+15550002222' })
+        await waitFor(() => emitted.length === 3, 1000)
+        expect(emitted.map((m) => [m.rowId, m.participant])).toEqual([
+            [1, '+1234567890'],
+            [2, '+15550002222'],
+            [3, '+1234567890'],
+        ])
+
+        await source.stop()
+    })
+
+    it('emits a row as-is once the grace period runs out', async () => {
+        const table = createTable([{ ...createMessage(1), participant: null }, createMessage(2)])
+        const { source, emitted } = await watch(table, 50)
+
+        await waitFor(() => emitted.length === 2, 1000)
+        expect(emitted.map((m) => [m.rowId, m.participant])).toEqual([
+            [1, null],
+            [2, '+1234567890'],
+        ])
+
+        await source.stop()
+    })
+
+    it('does not wait on rows that never have a sender: from-me rows and group events', async () => {
+        const table = createTable([
+            { ...createMessage(1), participant: null, isFromMe: true },
+            { ...createMessage(2), participant: null, kind: 'groupAction' },
+        ])
+        const { source, emitted } = await watch(table)
+
+        await waitFor(() => emitted.length === 2, 200)
+        await source.stop()
+    })
+
+    it('stop() cancels a pending recheck', async () => {
+        const table = createTable([{ ...createMessage(1), participant: null }])
+        const { source, emitted } = await watch(table, 100)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        await source.stop()
+
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(emitted).toEqual([])
+    })
+})

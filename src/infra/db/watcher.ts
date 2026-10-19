@@ -11,6 +11,13 @@
  *   fs.watch may fire many events in rapid succession. A single-slot
  *   semaphore (trigger/waitForTrigger) coalesces bursts into one
  *   consumer loop wake-up.
+ *
+ * Unlinked senders:
+ *   Messages.app can commit an incoming row a beat before it sets the row's
+ *   handle, so the handle join yields `participant = null` for a message that
+ *   does have a sender. The cursor stops at such a row (earlier rows still
+ *   go out) and re-polls until the sender links, then emits it in order. A
+ *   row still unlinked after `senderLinkGraceMs` is emitted as-is.
  */
 
 import { type FSWatcher, watch } from 'node:fs'
@@ -49,6 +56,8 @@ export interface WatchSourceOptions {
     readonly onBatch?: (messages: readonly Message[]) => void | Promise<void>
     readonly onError?: (error: Error) => void
     readonly debug?: boolean
+    /** How long an incoming row may wait for its sender to link before it is emitted as-is. */
+    readonly senderLinkGraceMs?: number
 }
 
 // -----------------------------------------------
@@ -56,6 +65,13 @@ export interface WatchSourceOptions {
 // -----------------------------------------------
 
 const BATCH_LIMIT = 100
+const SENDER_LINK_GRACE_MS = 2_000
+const SENDER_LINK_RECHECK_MS = 250
+
+/** An incoming chat message whose sender's handle has not been linked yet. */
+function awaitsSenderLink(message: Message): boolean {
+    return !message.isFromMe && message.kind === 'text' && message.chatId !== null && message.participant === null
+}
 
 // -----------------------------------------------
 // MessageWatchSource
@@ -72,9 +88,14 @@ export class MessageWatchSource {
     private readonly onBatch?: (messages: readonly Message[]) => void | Promise<void>
     private readonly onError?: (error: Error) => void
     private readonly debug: boolean
+    private readonly senderLinkGraceMs: number
 
     private isRunning = false
     private lastRowId = -1
+
+    /** The row the cursor is stopped at, waiting for its sender to link. */
+    private held: { rowId: number; since: number } | null = null
+    private recheckTimer: ReturnType<typeof setTimeout> | null = null
 
     private triggerResolve: (() => void) | null = null
     private hasPendingTrigger = false
@@ -100,6 +121,7 @@ export class MessageWatchSource {
         this.onBatch = options.onBatch
         this.onError = options.onError
         this.debug = options.debug ?? false
+        this.senderLinkGraceMs = options.senderLinkGraceMs ?? SENDER_LINK_GRACE_MS
     }
 
     // -----------------------------------------------
@@ -140,6 +162,8 @@ export class MessageWatchSource {
 
         this.detachWALWatcher()
         this.detachDirWatcher()
+        this.clearRecheck()
+        this.held = null
 
         if (this.triggerResolve) {
             this.triggerResolve()
@@ -195,7 +219,8 @@ export class MessageWatchSource {
     }
 
     private async processBatch(): Promise<boolean> {
-        const messages = await this.database.getMessagesSinceRowId(this.lastRowId, { limit: BATCH_LIMIT })
+        const fetched = await this.database.getMessagesSinceRowId(this.lastRowId, { limit: BATCH_LIMIT })
+        const messages = this.releasable(fetched)
 
         if (messages.length > 0) {
             if (!this.isRunning) return false
@@ -205,6 +230,51 @@ export class MessageWatchSource {
         }
 
         return messages.length === BATCH_LIMIT
+    }
+
+    /**
+     * The prefix of `fetched` that can be emitted now: everything before the
+     * first row still waiting for its sender, or through it once its grace
+     * period has run out.
+     */
+    private releasable(fetched: readonly Message[]): readonly Message[] {
+        const index = fetched.findIndex(awaitsSenderLink)
+        const waiting = fetched[index]
+        if (!waiting) {
+            this.held = null
+            return fetched
+        }
+
+        if (this.held?.rowId !== waiting.rowId) this.held = { rowId: waiting.rowId, since: Date.now() }
+
+        if (Date.now() - this.held.since >= this.senderLinkGraceMs) {
+            if (this.debug) console.warn(`[WatchSource] sender never linked for ${waiting.id}; emitting without it`)
+            this.held = null
+            this.trigger()
+            return fetched.slice(0, index + 1)
+        }
+
+        this.scheduleRecheck()
+        return fetched.slice(0, index)
+    }
+
+    // The link is itself a WAL write, so it usually wakes the loop; the
+    // timer covers a missed event and the grace deadline.
+    private scheduleRecheck(): void {
+        if (this.recheckTimer) return
+        this.recheckTimer = setTimeout(
+            () => {
+                this.recheckTimer = null
+                if (this.isRunning) this.trigger()
+            },
+            Math.min(SENDER_LINK_RECHECK_MS, this.senderLinkGraceMs)
+        )
+    }
+
+    private clearRecheck(): void {
+        if (!this.recheckTimer) return
+        clearTimeout(this.recheckTimer)
+        this.recheckTimer = null
     }
 
     // -----------------------------------------------
