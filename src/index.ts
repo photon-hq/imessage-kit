@@ -29,6 +29,7 @@ export type {
     ExpireStatus,
     Message,
     MessageKind,
+    MessageMention,
     ScheduleKind,
     ScheduleStatus,
     ShareActivity,

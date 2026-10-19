@@ -158,6 +158,24 @@ export function resolveScheduleStatus(code: number | null): ScheduleStatus {
 }
 
 // -----------------------------------------------
+// Mention
+// -----------------------------------------------
+
+/**
+ * A confirmed @mention: a span of the message text tagged with the handle of
+ * the person picked from the @ suggestions. The text is whatever name the
+ * sender sees; `address` is what identifies the person.
+ */
+export interface MessageMention {
+    /** Mentioned handle (phone number or email). */
+    readonly address: string
+    /** Start of the mention in `text`, in UTF-16 code units. */
+    readonly start: number
+    /** Length of the mention in UTF-16 code units. */
+    readonly length: number
+}
+
+// -----------------------------------------------
 // Message
 // -----------------------------------------------
 
@@ -283,4 +301,6 @@ export interface Message {
     readonly reaction: Reaction | null
     /** Attachments linked to the message. */
     readonly attachments: readonly Attachment[]
+    /** Confirmed @mentions in `text`, in order. Empty when the message tags no one. */
+    readonly mentions: readonly MessageMention[]
 }

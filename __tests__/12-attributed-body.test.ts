@@ -9,7 +9,8 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { extractTextFromAttributedBody } from '../src/infra/db/body-decoder'
+import { extractMentionsFromAttributedBody, extractTextFromAttributedBody } from '../src/infra/db/body-decoder'
+import { MENTION_BODY_SPLIT_RUN, MENTION_BODY_TWO_TAGS } from './fixtures/mentions'
 
 // -----------------------------------------------
 // Fixtures (real chat.db BLOBs, base64)
@@ -79,5 +80,34 @@ describe('extractTextFromAttributedBody', () => {
             const truncated = Buffer.from('040b73747265616d7479706564', 'hex')
             expect(extractTextFromAttributedBody(truncated)).toBeNull()
         })
+    })
+})
+
+describe('extractMentionsFromAttributedBody', () => {
+    it('returns each tagged span with its handle, in text order', () => {
+        expect(extractMentionsFromAttributedBody(b64(MENTION_BODY_TWO_TAGS))).toEqual([
+            { address: '+15550001111', start: 10, length: 6 },
+            { address: 'ann@x.test', start: 25, length: 10 },
+        ])
+    })
+
+    it('merges a mention split across adjacent runs, with UTF-16 offsets', () => {
+        const body = b64(MENTION_BODY_SPLIT_RUN)
+        const text = extractTextFromAttributedBody(body) ?? ''
+        const [mention] = extractMentionsFromAttributedBody(body)
+        expect(mention).toEqual({ address: '+15550001111', start: 3, length: 10 })
+        expect(text.slice(mention?.start, (mention?.start ?? 0) + (mention?.length ?? 0))).toBe('Jordan Lee')
+    })
+
+    it('returns [] for an untagged message', () => {
+        expect(extractMentionsFromAttributedBody(b64(REAL_ATTRIBUTED_BODY_CHECK_THIS_OUT))).toEqual([])
+    })
+
+    it('returns [] for empty, garbage, or undecodable input that names the attribute', () => {
+        expect(extractMentionsFromAttributedBody(Buffer.from([]))).toEqual([])
+        expect(extractMentionsFromAttributedBody(Buffer.from([0x01, 0x02, 0x03]))).toEqual([])
+        expect(
+            extractMentionsFromAttributedBody(Buffer.from('__kIMMentionConfirmedMention but not a typedstream'))
+        ).toEqual([])
     })
 })

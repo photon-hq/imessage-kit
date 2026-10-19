@@ -26,7 +26,7 @@ import type { Reaction } from '../../domain/reaction'
 import { resolveReactionMeta } from '../../domain/reaction'
 import { resolveService } from '../../domain/service'
 import { fromMacTimestampNs } from '../../domain/timestamp'
-import { extractTextFromAttributedBody } from './body-decoder'
+import { extractMentionsFromAttributedBody, extractTextFromAttributedBody } from './body-decoder'
 
 const HOME_DIR = homedir()
 
@@ -179,6 +179,10 @@ function resolveCloudKitChatId(value: unknown): ChatId | null {
 // Text extraction
 // -----------------------------------------------
 
+function isBlob(value: unknown): value is Buffer | Uint8Array {
+    return Buffer.isBuffer(value) || value instanceof Uint8Array
+}
+
 function resolveMessageText(row: Record<string, unknown>): string | null {
     const text = optionalString(row.text, 'message.text')
 
@@ -190,7 +194,7 @@ function resolveMessageText(row: Record<string, unknown>): string | null {
         return null
     }
 
-    if (!Buffer.isBuffer(row.attributedBody) && !(row.attributedBody instanceof Uint8Array)) {
+    if (!isBlob(row.attributedBody)) {
         return null
     }
 
@@ -380,6 +384,7 @@ export function rowToMessage(row: Record<string, unknown>, attachments: readonly
         hasAttachments: flag(row.cache_has_attachments, 'message.cache_has_attachments'),
         reaction,
         attachments,
+        mentions: isBlob(row.attributedBody) ? extractMentionsFromAttributedBody(row.attributedBody) : [],
     }
 }
 

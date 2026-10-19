@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { rowToAttachment, rowToChat, rowToMessage } from '../src/infra/db/mapper'
+import { MENTION_BODY_TWO_TAGS } from './fixtures/mentions'
 
 const MAC_EPOCH = new Date('2001-01-01T00:00:00Z').getTime()
 
@@ -286,5 +287,20 @@ describe('Messages DB Semantic Mapping', () => {
             const m = rowToMessage(createMessageRow({ date_edited: 0 }), [])
             expect(m.editedAt).toBeNull()
         })
+    })
+})
+
+describe('rowToMessage — mentions', () => {
+    it('maps the attributedBody @mentions onto the message', () => {
+        const message = rowToMessage(
+            createMessageRow({ text: null, attributedBody: Buffer.from(MENTION_BODY_TWO_TAGS, 'base64') }),
+            []
+        )
+        expect(message.text).toBe('mushy bet Jordan $20 and ann@x.test too')
+        expect(message.mentions.map((m) => m.address)).toEqual(['+15550001111', 'ann@x.test'])
+    })
+
+    it('is empty when the row has no attributedBody', () => {
+        expect(rowToMessage(createMessageRow(), []).mentions).toEqual([])
     })
 })
